@@ -1,0 +1,28 @@
+# Data & Outputs
+/data/
+/datasets/
+*.ply
+*.mp4
+*.mov
+*.jpg
+*.png
+
+# AI Model Weights
+*.pt
+*.pth
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+env/
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS Files
+.DS_Store
+Thumbs.db
