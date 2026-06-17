@@ -132,7 +132,24 @@ async def upload(file: UploadFile = File(...)) -> JSONResponse:
 async def run_pipeline(body: dict) -> JSONResponse:
     """
     Start the pipeline for a given job_id.
-    Body: { "job_id": "...", "config": { ... } }
+    Body: {
+      "job_id": "...",
+      "config": {
+        "case_id": str,
+        "investigator": str,
+        "scene_description": str,
+        "frame_rate": str,          # "1" | "2" | "5" | "all"
+        "blur_threshold": int,       # 0-100
+        "colmap_quality": str,       # "low" | "medium" | "high"
+        "colmap_matcher": str,       # "exhaustive" | "sequential" | "spatial"
+        "colmap_camera_model": str,  # "PINHOLE" | "OPENCV" | "SIMPLE_RADIAL"
+        "colmap_use_gpu": bool,
+        "gs_iterations": int,
+        "gs_max_resolution": int,    # 1024 | 2048 | 4096 | 0 (uncapped)
+        "gs_densification_interval": int,
+        "seg_vote_ratio": float
+      }
+    }
     """
     job_id = body.get("job_id")
 
@@ -144,6 +161,12 @@ async def run_pipeline(body: dict) -> JSONResponse:
 
     config = body.get("config", {})
     jobs[job_id]["config"] = config
+
+    # Log the full config so we can verify all fields arrive correctly
+    print(f"[VIT] Starting pipeline for job {job_id}")
+    print(f"[VIT] Config received:")
+    for key, value in config.items():
+        print(f"  {key}: {value!r}")
 
     # Ensure queue exists (in case WS connects before this call)
     if job_id not in progress_queues:
