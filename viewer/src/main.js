@@ -5,6 +5,7 @@ import { FlyControls } from 'three/examples/jsm/controls/FlyControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { SparkRenderer } from '@sparkjsdev/spark';
 import { SceneBuilder } from './SceneBuilder.js';
+import { VirtualCameraManager } from './VirtualCameraManager.js';
 
 // 1. Initialize Scene, Camera, Renderer
 const appContainer = document.getElementById('app');
@@ -46,6 +47,14 @@ flyControls.movementSpeed = 3;
 flyControls.rollSpeed = Math.PI / 10;
 flyControls.dragToLook = true;
 
+// Fix FlyControls getting stuck in drag mode if mouse is released outside the canvas
+renderer.domElement.addEventListener('pointerdown', (event) => {
+    renderer.domElement.setPointerCapture(event.pointerId);
+});
+renderer.domElement.addEventListener('pointerup', (event) => {
+    renderer.domElement.releasePointerCapture(event.pointerId);
+});
+
 let activeControls = orbitControls;
 
 const toggleCameraBtn = document.getElementById('toggle-camera-btn');
@@ -80,6 +89,9 @@ function enableControls() {
 // 6. Build Scene — pass gizmo and control functions to SceneBuilder
 const sceneBuilder = new SceneBuilder(scene, camera, transformControls, disableControls, enableControls);
 sceneBuilder.loadFromManifest();
+
+// 6.2 Virtual Camera Manager
+const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls);
 
 // 6.5 File Upload Logic
 const loadFileBtn = document.getElementById('load-file-btn');
@@ -116,7 +128,11 @@ function animate() {
         flyControls.update(delta);
     }
     
-    renderer.render(scene, camera);
+    // Pause rendering to the main canvas if VirtualCameraManager is currently exporting
+    // This prevents the main loop from overriding the WebWorker's splat sorting for the export cameras!
+    if (!vcManager.isExporting) {
+        renderer.render(scene, camera);
+    }
 
     // Calculate FPS
     const time = performance.now();

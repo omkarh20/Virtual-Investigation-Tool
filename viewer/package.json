@@ -16,6 +16,7 @@
   "dependencies": {
     "@sparkjsdev/spark": "^2.1.0",
     "cannon-es": "^0.20.0",
+    "jszip": "^3.10.1",
     "three": "^0.184.0"
   }
 }

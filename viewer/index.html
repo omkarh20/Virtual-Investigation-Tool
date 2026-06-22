@@ -24,6 +24,7 @@
         </div>
         <button id="toggle-camera-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Camera: Orbit</button>
         <button id="toggle-interaction-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Interaction: OFF</button>
+        <button id="toggle-vc-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Virtual Cameras</button>
         <button id="toggle-gizmo-mode-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px; display: none;">Mode: Translate</button>
         <button id="reset-object-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px; display: none;">Reset Object</button>
         <button id="reset-scene-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Reset Scene</button>
@@ -33,6 +34,47 @@
       </div>
       <div id="tooltip" class="tooltip hidden">Segment Name</div>
     </div>
+    <!-- Virtual Camera Panel -->
+    <div id="vc-panel" class="glass-panel" style="display: none; position: absolute; top: 20px; right: 20px; width: 300px; z-index: 100;">
+      <h2 style="margin-top: 0; font-size: 1.2rem; color: white;">Virtual Cameras</h2>
+      
+      <button id="vc-place-mode-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 15px;">⊕ Place Marker: OFF</button>
+      
+      <div id="vc-poi-list" style="margin-bottom: 15px; max-height: 150px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 5px;">
+        <p style="font-size: 0.8rem; color: #cbd5e1; text-align: center; margin: 5px 0;">No markers placed.</p>
+      </div>
+      
+      <div style="margin-bottom: 10px;">
+        <label style="color: white; font-size: 0.9rem;">Total Cameras:</label>
+        <input type="number" id="vc-count" value="100" min="10" max="500" style="width: 60px; background: rgba(255,255,255,0.1); color: white; border: 1px solid #4b5563; border-radius: 4px; padding: 2px 4px;">
+      </div>
+      
+      <div style="margin-bottom: 10px;">
+        <label style="color: white; font-size: 0.9rem;">Resolution:</label>
+        <select id="vc-res" style="background: rgba(255,255,255,0.1); color: white; border: 1px solid #4b5563; border-radius: 4px; padding: 2px 4px;">
+          <option value="1024x768">1024x768</option>
+          <option value="1920x1080" selected>1920x1080</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label style="color: white; font-size: 0.9rem;">Standoff Distance:</label>
+        <input type="range" id="vc-standoff" min="0.5" max="5.0" step="0.1" value="2.5" style="width: 100%; margin-top: 5px;">
+        <span id="vc-standoff-val" style="font-size: 0.8rem; color: #cbd5e1;">2.5 units</span>
+      </div>
+
+      <div style="margin-bottom: 15px;">
+        <label style="color: white; font-size: 0.9rem;">
+          <input type="checkbox" id="vc-preview" style="margin-right: 5px;"> Preview Frustums
+        </label>
+      </div>
+
+      <button id="vc-clear-btn" class="primary-btn" style="background-color: #ef4444; margin-bottom: 8px;">Clear All POIs</button>
+      <button id="vc-export-btn" class="primary-btn" style="background-color: #3b82f6;">Generate & Export</button>
+      
+      <p id="vc-status" style="font-size: 0.85rem; color: #a78bfa; margin-top: 10px;"></p>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
