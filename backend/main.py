@@ -18,13 +18,17 @@ from typing import Any
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="VIT Backend", version="0.1.0-stub")
 
-# ── CORS — allow the SuperSplat dev server ──────────────────────────────────
+# ── CORS — allow the SuperSplat dev server and Vite Viewer ───────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:5173", "http://127.0.0.1:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -242,3 +246,44 @@ async def get_job_status(job_id: str) -> JSONResponse:
 async def health() -> JSONResponse:
     """Simple health check."""
     return JSONResponse({"status": "ok", "version": "0.1.0-stub"})
+
+# ── VR Export Phase 3 ────────────────────────────────────────────────────────
+from vr_exporter import process_vr_export
+
+@app.post("/export-vr")
+async def export_vr(body: dict) -> JSONResponse:
+    """
+    Triggers Phase 3: Split the PLY file, generate collision meshes, and create manifest.
+    """
+    job_id = body.get("job_id")
+    if not job_id or job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+
+    input_dir = make_job_dir(job_id)
+    # The uploaded file name was saved in jobs dict
+    filename = jobs[job_id].get("filename")
+    if not filename:
+        return JSONResponse({"error": "No file uploaded for this job"}, status_code=400)
+        
+    input_ply_path = os.path.join(input_dir, filename)
+    
+    if not os.path.exists(input_ply_path):
+        return JSONResponse({"error": "Input .ply file not found"}, status_code=404)
+
+    output_dir = os.path.join(JOBS_DIR, job_id, "vr-assets")
+    
+    try:
+        # Run the exporter script
+        manifest = process_vr_export(job_id, input_ply_path, output_dir)
+        return JSONResponse({
+            "status": "success", 
+            "manifest_url": f"http://localhost:8000/jobs/{job_id}/vr-assets/manifest.json",
+            "manifest": manifest
+        })
+    except Exception as e:
+        print(f"[Error] VR Export failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# Mount the jobs directory so the Viewer can fetch the vr-assets
+os.makedirs(JOBS_DIR, exist_ok=True)
+app.mount("/jobs", StaticFiles(directory=JOBS_DIR), name="jobs")

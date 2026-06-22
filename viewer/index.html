@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VIT VR Viewer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="ui-overlay" class="ui-overlay">
+      <div class="glass-panel">
+        <h1 class="scene-title">Virtual Scene Viewer</h1>
+        <p class="scene-status" id="scene-status">Loading Manifest...</p>
+        <div class="stats-container">
+          <div class="stat-box">
+            <span class="stat-label">Segments</span>
+            <span class="stat-value" id="segment-count">0</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">FPS</span>
+            <span class="stat-value" id="fps-counter">0</span>
+          </div>
+        </div>
+        <button id="toggle-camera-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Camera: Orbit</button>
+        <button id="toggle-interaction-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Interaction: OFF</button>
+        <button id="toggle-gizmo-mode-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px; display: none;">Mode: Translate</button>
+        <button id="reset-object-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px; display: none;">Reset Object</button>
+        <button id="reset-scene-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Reset Scene</button>
+        <button id="load-file-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Load Local File (.ply)</button>
+        <input type="file" id="file-input" accept=".ply,.spz,.splat" style="display: none;">
+        <button id="enter-vr-btn" class="primary-btn" disabled>VR Mode (Coming Soon)</button>
+      </div>
+      <div id="tooltip" class="tooltip hidden">Segment Name</div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
