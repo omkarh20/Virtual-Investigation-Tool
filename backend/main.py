@@ -26,7 +26,6 @@ app = FastAPI(title="VIT Backend", version="0.1.0-stub")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000", "http://127.0.0.1:3000",
         "http://localhost:5173", "http://127.0.0.1:5173"
     ],
     allow_credentials=True,
@@ -246,6 +245,15 @@ async def get_job_status(job_id: str) -> JSONResponse:
 async def health() -> JSONResponse:
     """Simple health check."""
     return JSONResponse({"status": "ok", "version": "0.1.0-stub"})
+
+
+@app.get("/jobs")
+async def list_jobs() -> JSONResponse:
+    """Return a list of all in-memory jobs. Placeholder for future DB-backed project listing."""
+    return JSONResponse([
+        {"job_id": jid, "status": j["status"], "filename": j.get("filename", "")}
+        for jid, j in jobs.items()
+    ])
 
 # ── VR Export Phase 3 ────────────────────────────────────────────────────────
 from vr_exporter import process_vr_export

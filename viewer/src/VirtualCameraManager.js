@@ -506,14 +506,27 @@ export class VirtualCameraManager {
                 const fy = (height / 2) / Math.tan(fovRad / 2);
                 const fx = fy * (width / height);
 
-                // Extrinsics: world-to-camera rotation (View Matrix)
+                // Extrinsics: camera-to-world rotation for the carver
                 const vm = exportCam.matrixWorldInverse.elements; 
-                // Three.js matrix is column-major: elements[col * 4 + row]
-                // OpenCV convention: flip Y and Z rows
+                // Three.js stores matrices column-major: element index = col*4 + row
+                //
+                // R_c2w_three (camera-to-world in Three.js space) is the transpose of
+                // the upper-left 3x3 of matrixWorldInverse:
+                //   [[vm[0], vm[1], vm[2]],
+                //    [vm[4], vm[5], vm[6]],
+                //    [vm[8], vm[9], vm[10]]]
+                //
+                // Two corrections needed:
+                //   1. PLY→Three.js: SplatMesh rotated 180° on X → M = diag(1,-1,-1)
+                //      Multiply R_c2w on the RIGHT by M (negate cols 1,2)
+                //   2. Three.js camera→OpenCV camera: y-up/z-back → y-down/z-forward
+                //      Multiply R_c2w on the LEFT by M (negate rows 1,2)
+                //
+                // Combined: rotation = M * R_c2w_three * M
                 const rotation = [
-                    [vm[0], vm[4], vm[8]],
-                    [-vm[1], -vm[5], -vm[9]],
-                    [-vm[2], -vm[6], -vm[10]]
+                    [ vm[0], -vm[1], -vm[2]],
+                    [-vm[4],  vm[5],  vm[6]],
+                    [-vm[8],  vm[9],  vm[10]]
                 ];
 
                 cameraEntries.push({
@@ -521,7 +534,8 @@ export class VirtualCameraManager {
                     img_name: imgName,
                     width: width,
                     height: height,
-                    position: [exportCam.position.x, exportCam.position.y, exportCam.position.z],
+                    // Negate Y and Z to convert from Three.js world space back to original PLY space
+                    position: [exportCam.position.x, -exportCam.position.y, -exportCam.position.z],
                     rotation: rotation,
                     fx: fx,
                     fy: fy
