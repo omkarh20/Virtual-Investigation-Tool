@@ -29,3 +29,7 @@ Thumbs.db
 
 # Dev
 backend/dev
+dev
+
+# Outputs
+backend/jobs

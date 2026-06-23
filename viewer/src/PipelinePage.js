@@ -12,7 +12,7 @@ import { router } from './router.js';
 const BACKEND_WS  = 'ws://localhost:8000';
 
 const STEPS = [
-    { id: 1, label: 'Extracting Frames' },
+    { id: 1, label: 'Preparing Images' },
     { id: 2, label: 'COLMAP SfM' },
     { id: 3, label: '3DGS Training' },
     { id: 4, label: 'Segmentation' },

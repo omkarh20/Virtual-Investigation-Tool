@@ -15,6 +15,8 @@ import shutil
 import uuid
 from typing import Any
 
+from runners.preprocessor import process_inputs
+
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -58,19 +60,35 @@ async def push(job_id: str, msg: dict) -> None:
         await q.put(msg)
 
 
-async def fake_pipeline(job_id: str, config: dict) -> None:
+async def run_pipeline_task(job_id: str, config: dict) -> None:
     """
-    Simulates the 4-stage pipeline by sleeping and emitting progress events.
-    Replace this with real subprocess calls in the future.
+    Executes the pipeline. Currently uses the real preprocessor for Step 1,
+    and simulates the remaining stages.
     """
+    jobs[job_id]["status"] = "running"
+    
+    input_dir = make_job_dir(job_id)
+    images_dir = os.path.join(JOBS_DIR, job_id, "images")
+
+    # --- Step 1: Real Preprocessor ---
+    await push(job_id, {
+        "type": "step_start", "step": 1, "total": 4, 
+        "label": "Preparing Images", "progress": 0
+    })
+    try:
+        await process_inputs(job_id, input_dir, images_dir, config, lambda msg: push(job_id, msg))
+    except Exception as e:
+        await push(job_id, {"type": "log", "step": 1, "progress": 100, "text": f"Error during preparation: {e}"})
+        jobs[job_id]["status"] = "failed"
+        await push(job_id, None)
+        return
+
+    # --- Step 2-4: Simulated ---
     steps = [
-        ("Extracting frames",    1, 4),
         ("Running COLMAP SfM",   2, 4),
         ("Training 3DGS model",  3, 4),
         ("Segmenting model",     4, 4),
     ]
-
-    jobs[job_id]["status"] = "running"
 
     for label, step_num, total_steps in steps:
         # Signal start of this step
@@ -90,7 +108,7 @@ async def fake_pipeline(job_id: str, config: dict) -> None:
                 "type": "log",
                 "step": step_num,
                 "progress": pct,
-                "text": f"[Step {step_num}/{total_steps}] {label} — tick {i + 1}/5",
+                "text": f"Working on {label} (Phase {i + 1}/5)...",
             })
 
     # Done
@@ -98,7 +116,7 @@ async def fake_pipeline(job_id: str, config: dict) -> None:
     await push(job_id, {
         "type": "done",
         "progress": 100,
-        "text": "Pipeline complete.",
+        "text": "Investigation data is ready!",
         "result_url": f"/result/{job_id}",
     })
 
@@ -175,8 +193,8 @@ async def run_pipeline(body: dict) -> JSONResponse:
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
 
-    # Kick off the fake pipeline in the background
-    asyncio.create_task(fake_pipeline(job_id, config))
+    # Kick off the pipeline in the background
+    asyncio.create_task(run_pipeline_task(job_id, config))
 
     return JSONResponse({"status": "started", "job_id": job_id})
 
