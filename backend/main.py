@@ -1,30 +1,24 @@
-"""
-VIT Backend — Stubbed FastAPI Server
-
-This is a barebones server for UI development.
-No real COLMAP, 3DGS, or segmentation runs here — all pipeline stages
-are faked with asyncio sleeps that stream progress over WebSocket.
-
-Run with:
-    uvicorn main:app --reload --port 8000
-"""
-
 import asyncio
 import os
 import shutil
 import uuid
+import glob
+import zipfile
 from typing import Any
 
 from runners.preprocessor import process_inputs
+from runners.colmap_sparse import run_colmap_sparse
+from runners.colmap_dense import run_colmap_dense
+from runners.train_3dgs import run_3dgs_training
+from vr_exporter import process_vr_export
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="VIT Backend", version="0.1.0-stub")
+app = FastAPI(title="VIT Backend", version="0.1.0-modular")
 
-# ── CORS — allow the SuperSplat dev server and Vite Viewer ───────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -35,102 +29,134 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory job store ─────────────────────────────────────────────────────
-# job_id -> { "status": str, "input_path": str, "config": dict }
 jobs: dict[str, dict[str, Any]] = {}
-
-# job_id -> asyncio.Queue of progress messages for the WebSocket
 progress_queues: dict[str, asyncio.Queue] = {}
-
 JOBS_DIR = os.environ.get("JOBS_DIR", "./jobs")
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def make_job_dir(job_id: str) -> str:
     path = os.path.join(JOBS_DIR, job_id, "input")
     os.makedirs(path, exist_ok=True)
     return path
 
-
 async def push(job_id: str, msg: dict) -> None:
-    """Push a progress message to the WebSocket queue for this job."""
     q = progress_queues.get(job_id)
     if q:
         await q.put(msg)
 
+PHASES = [
+    {"id": 1, "label": "Preparing Images",   "runner": process_inputs},
+    {"id": 2, "label": "COLMAP Sparse",       "runner": run_colmap_sparse},
+    {"id": 3, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
+    {"id": 4, "label": "3DGS Training",       "runner": run_3dgs_training},
+    {"id": 5, "label": "Segmentation",        "runner": "dummy", "simulated": True},
+]
 
-async def run_pipeline_task(job_id: str, config: dict) -> None:
-    """
-    Executes the pipeline. Currently uses the real preprocessor for Step 1,
-    and simulates the remaining stages.
-    """
-    jobs[job_id]["status"] = "running"
+async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
+    job = jobs[job_id]
+    job["status"] = "running"
+    config = job["config"]
+    enable_dense = config.get("colmap_dense_enable", False)
     
-    input_dir = make_job_dir(job_id)
-    images_dir = os.path.join(JOBS_DIR, job_id, "images")
-
-    # --- Step 1: Real Preprocessor ---
-    await push(job_id, {
-        "type": "step_start", "step": 1, "total": 4, 
-        "label": "Preparing Images", "progress": 0
-    })
-    try:
-        await process_inputs(job_id, input_dir, images_dir, config, lambda msg: push(job_id, msg))
-    except Exception as e:
-        await push(job_id, {"type": "log", "step": 1, "progress": 100, "text": f"Error during preparation: {e}"})
-        jobs[job_id]["status"] = "failed"
-        await push(job_id, None)
-        return
-
-    # --- Step 2-4: Simulated ---
-    steps = [
-        ("Running COLMAP SfM",   2, 4),
-        ("Training 3DGS model",  3, 4),
-        ("Segmenting model",     4, 4),
-    ]
-
-    for label, step_num, total_steps in steps:
-        # Signal start of this step
+    start_idx = job["current_phase"]
+    if start_idx == 0:
+        start_idx = 1
+        
+    for phase in PHASES:
+        pid = phase["id"]
+        if pid < start_idx:
+            continue
+            
+        if pid in job["completed_phases"]:
+            continue
+            
+        if phase.get("optional") and pid == 3 and not enable_dense:
+            job["completed_phases"].append(pid)
+            continue
+            
+        job["current_phase"] = pid
+        
         await push(job_id, {
             "type": "step_start",
-            "step": step_num,
-            "total": total_steps,
-            "label": label,
-            "progress": round((step_num - 1) / total_steps * 100),
+            "step": pid,
+            "total": len(PHASES),
+            "label": phase["label"],
+            "progress": 0
         })
-
-        # Simulate sub-step logs
-        for i in range(5):
-            await asyncio.sleep(0.6)
-            pct = round(((step_num - 1) + (i + 1) / 5) / total_steps * 100)
+        
+        try:
+            if phase.get("simulated"):
+                for i in range(5):
+                    await asyncio.sleep(0.6)
+                    pct = int((i + 1) / 5 * 100)
+                    await push(job_id, {
+                        "type": "log",
+                        "step": pid,
+                        "progress": pct,
+                        "text": f"Simulating {phase['label']} (Phase {i + 1}/5)..."
+                    })
+                result = {"simulated": True}
+            elif pid == 1:
+                input_dir = make_job_dir(job_id)
+                images_dir = os.path.join(JOBS_DIR, job_id, "images")
+                await process_inputs(job_id, input_dir, images_dir, config, lambda msg: push(job_id, msg))
+                result = {"image_dir": images_dir}
+            else:
+                job_dir = os.path.join(JOBS_DIR, job_id)
+                runner_func = phase["runner"]
+                result = await runner_func(job_id, job_dir, config, lambda msg: push(job_id, msg))
+                
+            job["completed_phases"].append(pid)
+            if "phase_results" not in job:
+                job["phase_results"] = {}
+            job["phase_results"][str(pid)] = result
+            
             await push(job_id, {
-                "type": "log",
-                "step": step_num,
-                "progress": pct,
-                "text": f"Working on {label} (Phase {i + 1}/5)...",
+                "type": "phase_complete",
+                "phase": pid,
+                "label": phase["label"],
+                "summary": str(result)
             })
+            
+            # Check if we should stop here
+            is_end = end_phase is not None and pid == end_phase
+            
+            if is_end or (job["run_mode"] == "step" and pid < len(PHASES)):
+                next_pid = pid + 1
+                if next_pid == 3 and not enable_dense:
+                    next_pid = 4
+                    
+                if is_end:
+                    job["status"] = "paused"
+                    await push(job_id, {"type": "phase_paused", "next_phase": None, "next_label": None})
+                    return
+                elif next_pid <= len(PHASES):
+                    next_label = PHASES[next_pid - 1]["label"]
+                    job["status"] = "paused"
+                    await push(job_id, {
+                        "type": "phase_paused",
+                        "next_phase": next_pid,
+                        "next_label": next_label
+                    })
+                    return 
+                
+        except Exception as e:
+            await push(job_id, {"type": "log", "step": pid, "progress": 100, "text": f"Error: {e}"})
+            job["status"] = "failed"
+            await push(job_id, None)
+            return
 
-    # Done
-    jobs[job_id]["status"] = "done"
+    job["status"] = "done"
     await push(job_id, {
         "type": "done",
         "progress": 100,
-        "text": "Investigation data is ready!",
+        "text": "Pipeline complete!",
         "result_url": f"/result/{job_id}",
     })
-
-    # Sentinel — tells the WS handler to close
     await push(job_id, None)
 
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
-
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)) -> JSONResponse:
-    """
-    Accept a video or image upload, save it to disk, and return a job_id.
-    """
     job_id = str(uuid.uuid4())
     input_dir = make_job_dir(job_id)
     dest = os.path.join(input_dir, file.filename)
@@ -143,6 +169,10 @@ async def upload(file: UploadFile = File(...)) -> JSONResponse:
         "filename": file.filename,
         "input_path": dest,
         "config": {},
+        "current_phase": 0,
+        "completed_phases": [],
+        "run_mode": "step",
+        "phase_results": {}
     }
     progress_queues[job_id] = asyncio.Queue()
 
@@ -151,29 +181,7 @@ async def upload(file: UploadFile = File(...)) -> JSONResponse:
 
 @app.post("/run-pipeline")
 async def run_pipeline(body: dict) -> JSONResponse:
-    """
-    Start the pipeline for a given job_id.
-    Body: {
-      "job_id": "...",
-      "config": {
-        "case_id": str,
-        "investigator": str,
-        "scene_description": str,
-        "frame_rate": str,          # "1" | "2" | "5" | "all"
-        "blur_threshold": int,       # 0-100
-        "colmap_quality": str,       # "low" | "medium" | "high"
-        "colmap_matcher": str,       # "exhaustive" | "sequential" | "spatial"
-        "colmap_camera_model": str,  # "PINHOLE" | "OPENCV" | "SIMPLE_RADIAL"
-        "colmap_use_gpu": bool,
-        "gs_iterations": int,
-        "gs_max_resolution": int,    # 1024 | 2048 | 4096 | 0 (uncapped)
-        "gs_densification_interval": int,
-        "seg_vote_ratio": float
-      }
-    }
-    """
     job_id = body.get("job_id")
-
     if not job_id or job_id not in jobs:
         return JSONResponse({"error": "Unknown job_id"}, status_code=404)
 
@@ -181,30 +189,94 @@ async def run_pipeline(body: dict) -> JSONResponse:
         return JSONResponse({"error": "Pipeline already running"}, status_code=409)
 
     config = body.get("config", {})
+    mode = body.get("mode", "step")
+    start_phase = body.get("start_phase", 1)
+    end_phase = body.get("end_phase", None)
+    
     jobs[job_id]["config"] = config
+    jobs[job_id]["run_mode"] = mode
+    jobs[job_id]["current_phase"] = start_phase
 
-    # Log the full config so we can verify all fields arrive correctly
-    print(f"[VIT] Starting pipeline for job {job_id}")
-    print(f"[VIT] Config received:")
-    for key, value in config.items():
-        print(f"  {key}: {value!r}")
+    # If starting at phase 4 (3DGS), we need to extract the uploaded zip containing images & sparse
+    if start_phase == 4:
+        input_file = jobs[job_id]["input_path"]
+        job_dir = os.path.join(JOBS_DIR, job_id)
+        if input_file.endswith(".zip"):
+            try:
+                with zipfile.ZipFile(input_file, 'r') as zip_ref:
+                    zip_ref.extractall(job_dir)
+            except Exception as e:
+                return JSONResponse({"error": f"Failed to extract zip for 3DGS: {e}"}, status_code=400)
 
-    # Ensure queue exists (in case WS connects before this call)
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
 
-    # Kick off the pipeline in the background
-    asyncio.create_task(run_pipeline_task(job_id, config))
-
+    asyncio.create_task(run_pipeline_orchestrator(job_id, end_phase))
     return JSONResponse({"status": "started", "job_id": job_id})
+
+@app.post("/continue-pipeline")
+async def continue_pipeline(body: dict) -> JSONResponse:
+    job_id = body.get("job_id")
+    if not job_id or job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+
+    if jobs[job_id]["status"] != "paused":
+        return JSONResponse({"error": "Pipeline is not paused"}, status_code=409)
+
+    mode = body.get("mode", "step")
+    jobs[job_id]["run_mode"] = mode
+
+    if job_id not in progress_queues:
+        progress_queues[job_id] = asyncio.Queue()
+
+    asyncio.create_task(run_pipeline_orchestrator(job_id))
+    return JSONResponse({"status": "resumed", "job_id": job_id})
+
+
+@app.get("/download/{job_id}/{phase_id}")
+async def download_phase(job_id: str, phase_id: int):
+    job = jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+        
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    
+    if phase_id == 1:
+        images_dir = os.path.join(job_dir, "images")
+        if not os.path.exists(images_dir):
+            return JSONResponse({"error": "No images found"}, status_code=404)
+        zip_path = os.path.join(job_dir, "phase1_images.zip")
+        shutil.make_archive(zip_path[:-4], 'zip', images_dir)
+        return FileResponse(zip_path, media_type="application/zip", filename="images.zip")
+        
+    elif phase_id in [2, 3]:
+        zip_path = os.path.join(job_dir, f"phase{phase_id}_colmap.zip")
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for d in ["images", "sparse"]:
+                d_path = os.path.join(job_dir, d)
+                if os.path.exists(d_path):
+                    for root, _, files in os.walk(d_path):
+                        for file in files:
+                            abs_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(abs_path, job_dir)
+                            zipf.write(abs_path, rel_path)
+        if not os.path.exists(zip_path):
+            return JSONResponse({"error": "No COLMAP outputs found"}, status_code=404)
+        return FileResponse(zip_path, media_type="application/zip", filename=f"colmap_phase{phase_id}.zip")
+        
+    elif phase_id == 4:
+        # Return .ply
+        ply_files = glob.glob(os.path.join(job_dir, "output", "point_cloud", "iteration_*", "point_cloud.ply"))
+        if not ply_files:
+            return JSONResponse({"error": "No .ply found"}, status_code=404)
+        ply_files.sort(key=os.path.getmtime, reverse=True)
+        return FileResponse(ply_files[0], media_type="application/octet-stream", filename="model.ply")
+        
+    return JSONResponse({"error": "Download not supported for this phase"}, status_code=400)
 
 
 @app.websocket("/progress/{job_id}")
 async def progress_ws(websocket: WebSocket, job_id: str) -> None:
-    """
-    Stream pipeline progress events to the browser.
-    Each message is a JSON object. A None sentinel closes the socket.
-    """
     await websocket.accept()
 
     if job_id not in progress_queues:
@@ -216,90 +288,69 @@ async def progress_ws(websocket: WebSocket, job_id: str) -> None:
         while True:
             msg = await q.get()
             if msg is None:
-                # Pipeline finished — close cleanly
                 await websocket.close()
                 break
             await websocket.send_json(msg)
     except WebSocketDisconnect:
         pass
     finally:
-        # Clean up queue when client disconnects
         progress_queues.pop(job_id, None)
-
-
-@app.get("/result/{job_id}")
-async def get_result(job_id: str) -> JSONResponse:
-    """
-    Return the result path for a completed job.
-    In this stub, we just return a status — no real .ply file yet.
-    """
-    job = jobs.get(job_id)
-
-    if not job:
-        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
-
-    if job["status"] != "done":
-        return JSONResponse({"error": "Pipeline not finished yet", "status": job["status"]}, status_code=202)
-
-    # Future: return the actual .ply file URL
-    return JSONResponse({
-        "status": "done",
-        "job_id": job_id,
-        "result_url": None,  # Will point to the .ply file once the real pipeline runs
-        "message": "Stub — no real .ply file generated yet.",
-    })
-
 
 @app.get("/jobs/{job_id}")
 async def get_job_status(job_id: str) -> JSONResponse:
-    """Get the current status of a job."""
     job = jobs.get(job_id)
     if not job:
         return JSONResponse({"error": "Unknown job_id"}, status_code=404)
-    return JSONResponse({"job_id": job_id, "status": job["status"]})
+    return JSONResponse({
+        "job_id": job_id, 
+        "status": job["status"],
+        "current_phase": job["current_phase"],
+        "completed_phases": job["completed_phases"]
+    })
 
+@app.get("/result/{job_id}")
+async def get_result(job_id: str) -> JSONResponse:
+    job = jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+    if job["status"] != "done":
+        return JSONResponse({"error": "Pipeline not finished yet", "status": job["status"]}, status_code=202)
+    return JSONResponse({
+        "status": "done",
+        "job_id": job_id,
+        "result_url": None,
+        "message": "Stub — no real .ply file generated yet.",
+    })
 
 @app.get("/health")
 async def health() -> JSONResponse:
-    """Simple health check."""
-    return JSONResponse({"status": "ok", "version": "0.1.0-stub"})
-
+    return JSONResponse({"status": "ok", "version": "0.1.0-modular"})
 
 @app.get("/jobs")
 async def list_jobs() -> JSONResponse:
-    """Return a list of all in-memory jobs. Placeholder for future DB-backed project listing."""
     return JSONResponse([
         {"job_id": jid, "status": j["status"], "filename": j.get("filename", "")}
         for jid, j in jobs.items()
     ])
 
-# ── VR Export Phase 3 ────────────────────────────────────────────────────────
-from vr_exporter import process_vr_export
-
 @app.post("/export-vr")
 async def export_vr(body: dict) -> JSONResponse:
-    """
-    Triggers Phase 3: Split the PLY file, generate collision meshes, and create manifest.
-    """
     job_id = body.get("job_id")
     if not job_id or job_id not in jobs:
         return JSONResponse({"error": "Unknown job_id"}, status_code=404)
 
     input_dir = make_job_dir(job_id)
-    # The uploaded file name was saved in jobs dict
     filename = jobs[job_id].get("filename")
     if not filename:
         return JSONResponse({"error": "No file uploaded for this job"}, status_code=400)
         
     input_ply_path = os.path.join(input_dir, filename)
-    
     if not os.path.exists(input_ply_path):
         return JSONResponse({"error": "Input .ply file not found"}, status_code=404)
 
     output_dir = os.path.join(JOBS_DIR, job_id, "vr-assets")
     
     try:
-        # Run the exporter script
         manifest = process_vr_export(job_id, input_ply_path, output_dir)
         return JSONResponse({
             "status": "success", 
@@ -310,6 +361,5 @@ async def export_vr(body: dict) -> JSONResponse:
         print(f"[Error] VR Export failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# Mount the jobs directory so the Viewer can fetch the vr-assets
 os.makedirs(JOBS_DIR, exist_ok=True)
 app.mount("/jobs", StaticFiles(directory=JOBS_DIR), name="jobs")

@@ -249,6 +249,47 @@ body {
 }
 .pipeline-actions { display: flex; gap: 12px; }
 
+/* ── Pipeline Config Panel ─────────────────────────────────────────────────── */
+.pipeline-config {
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 28px;
+}
+.config-title { margin: 0 0 20px; font-size: 1.1rem; font-weight: 600; color: #f9fafb; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px; }
+.config-section { margin-bottom: 24px; }
+.config-section h3 { margin: 0 0 12px; font-size: 0.9rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; }
+.config-field { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.config-field label { font-size: 0.9rem; color: #d1d5db; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.config-field select {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  color: #f9fafb;
+  font-family: inherit;
+  font-size: 0.875rem;
+  padding: 6px 12px;
+  width: 200px;
+}
+.config-field select:focus { outline: none; border-color: #6366f1; }
+.config-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 12px; }
+
+/* ── Pipeline Phase Control ────────────────────────────────────────────────── */
+.phase-control {
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.phase-summary { font-size: 0.9rem; color: #e0e7ff; }
+.phase-actions { display: flex; gap: 12px; }
+
+.step-optional .step-label { color: #6b7280; font-style: italic; }
 
 #app {
   position: absolute;

@@ -43,48 +43,6 @@
       </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════════════════════════ -->
-    <!-- Modal: New Investigation                                           -->
-    <!-- ══════════════════════════════════════════════════════════════════ -->
-    <div id="home-modal" class="modal-backdrop" style="display:none">
-      <div class="modal-box">
-        <div class="modal-header">
-          <h2>New Investigation</h2>
-          <button class="modal-close" id="home-modal-close">✕</button>
-        </div>
-
-        <!-- Upload mode selector -->
-        <div class="upload-mode-tabs">
-          <button class="mode-tab" id="upload-mode-video">📹 Video</button>
-          <button class="mode-tab" id="upload-mode-zip">🗜️ ZIP of Images</button>
-          <button class="mode-tab" id="upload-mode-dir">📁 Image Folder</button>
-        </div>
-
-        <div id="group-video" class="upload-input-group" style="display:none">
-          <label>Select a video file (mp4, mov, etc.)</label>
-          <input type="file" id="input-video" accept="video/*" />
-        </div>
-        <div id="group-zip" class="upload-input-group" style="display:none">
-          <label>Select a ZIP archive of images</label>
-          <input type="file" id="input-zip" accept=".zip" />
-        </div>
-        <div id="group-dir" class="upload-input-group" style="display:none">
-          <label>Select an image folder</label>
-          <input type="file" id="input-dir" webkitdirectory multiple />
-        </div>
-
-        <div class="modal-field">
-          <label for="project-name">Project name (optional)</label>
-          <input type="text" id="project-name" placeholder="Scene 001" />
-        </div>
-
-        <p id="upload-status" class="upload-status"></p>
-
-        <div class="modal-footer">
-          <button class="btn btn-primary" id="home-start-btn" disabled>Start Pipeline</button>
-        </div>
-      </div>
-    </div>
 
     <!-- ══════════════════════════════════════════════════════════════════ -->
     <!-- Page: Pipeline Progress                                            -->
@@ -94,8 +52,138 @@
 
         <h1 id="pipeline-job-title" class="pipeline-title">Pipeline</h1>
 
+        <div class="pipeline-mode-toggle" style="margin-bottom: 20px; display: flex; gap: 8px;">
+          <button class="mode-tab active-mode" id="mode-full-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer;">Full Pipeline</button>
+          <button class="mode-tab" id="mode-advanced-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer; background: transparent; border: 1px solid #4b5563; color: #9ca3af;">Advanced Mode</button>
+        </div>
+
+        <!-- Pipeline Config Panel -->
+        <div id="pipeline-config" class="pipeline-config">
+          <h2 class="config-title">Pipeline Configuration</h2>
+          
+          <div class="config-section" id="advanced-config-section" style="display:none;">
+            <h3>Advanced Mode Settings</h3>
+            <div class="config-field">
+              <label for="cfg-start-phase">Starting Phase</label>
+              <select id="cfg-start-phase">
+                <option value="1" selected>1. Prepare Images</option>
+                <option value="2">2. COLMAP Sparse</option>
+                <option value="4">4. 3DGS Training</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="config-section" id="upload-section">
+            <h3>Input Data <span id="input-helper-text" style="font-size: 0.8rem; color: #9ca3af; font-weight: normal; margin-left: 8px;">(Video or Images)</span></h3>
+            <div class="upload-mode-tabs" style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+              <button class="mode-tab active-mode" id="upload-mode-video">📹 Video</button>
+              <button class="mode-tab" id="upload-mode-zip">🗜️ ZIP of Images</button>
+              <button class="mode-tab" id="upload-mode-dir">📁 Image Folder</button>
+            </div>
+
+            <div id="group-video" class="upload-input-group">
+              <label>Select a video file (mp4, mov, etc.)</label>
+              <input type="file" id="input-video" accept="video/*" />
+            </div>
+            <div id="group-zip" class="upload-input-group" style="display:none">
+              <label>Select a ZIP archive of images</label>
+              <input type="file" id="input-zip" accept=".zip" />
+            </div>
+            <div id="group-dir" class="upload-input-group" style="display:none">
+              <label>Select an image folder</label>
+              <input type="file" id="input-dir" webkitdirectory multiple />
+            </div>
+
+            <div class="modal-field" style="margin-top: 16px;">
+              <label for="project-name">Project name (optional)</label>
+              <input type="text" id="project-name" placeholder="Scene 001" />
+            </div>
+            <p id="upload-status" class="upload-status" style="margin-top: 8px;"></p>
+          </div>
+
+          
+          <div class="config-section" id="cfg-section-prep">
+            <h3>Image Preparation</h3>
+            <div class="config-field">
+              <label for="cfg-frame-rate">Frame Rate (video only)</label>
+              <select id="cfg-frame-rate">
+                <option value="1">1 fps</option>
+                <option value="2" selected>2 fps</option>
+                <option value="5">5 fps</option>
+                <option value="all">All frames</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="config-section" id="cfg-section-colmap">
+            <h3>COLMAP Reconstruction</h3>
+            <div class="config-field">
+              <label for="cfg-matcher">Matching Strategy</label>
+              <select id="cfg-matcher">
+                <option value="exhaustive" selected>Exhaustive (best for small sets)</option>
+                <option value="sequential">Sequential (best for video)</option>
+                <option value="spatial">Spatial (best for large sets)</option>
+              </select>
+            </div>
+            <div class="config-field">
+              <label for="cfg-camera-model">Camera Model</label>
+              <select id="cfg-camera-model">
+                <option value="OPENCV" selected>OPENCV</option>
+                <option value="PINHOLE">PINHOLE</option>
+                <option value="SIMPLE_RADIAL">SIMPLE_RADIAL</option>
+              </select>
+            </div>
+            <div class="config-field">
+              <label for="cfg-quality">Quality</label>
+              <select id="cfg-quality">
+                <option value="low">Low (fast)</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High (slow)</option>
+              </select>
+            </div>
+            <div class="config-field">
+              <label for="cfg-gpu">
+                <input type="checkbox" id="cfg-gpu" checked> Use GPU
+              </label>
+            </div>
+            <div class="config-field">
+              <label for="cfg-dense">
+                <input type="checkbox" id="cfg-dense"> Enable Dense Reconstruction (optional, slow)
+              </label>
+            </div>
+          </div>
+
+          <div class="config-section" id="cfg-section-3dgs">
+            <h3>3DGS Training</h3>
+            <div class="config-field">
+              <label for="cfg-gs-iterations">Training Iterations</label>
+              <select id="cfg-gs-iterations">
+                <option value="7000">7,000 (preview)</option>
+                <option value="15000">15,000 (fast)</option>
+                <option value="30000" selected>30,000 (standard)</option>
+                <option value="60000">60,000 (high quality)</option>
+              </select>
+            </div>
+            <div class="config-field">
+              <label for="cfg-gs-resolution">Max Resolution</label>
+              <select id="cfg-gs-resolution">
+                <option value="1024">1024</option>
+                <option value="2048" selected>2048</option>
+                <option value="4096">4096</option>
+                <option value="0">Uncapped</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="config-actions">
+            <button class="btn btn-primary" id="pipeline-run-btn">▶ Run Pipeline</button>
+            <button class="btn btn-secondary" id="pipeline-run-all-btn">▶▶ Run All (No Pauses)</button>
+            <button class="btn btn-primary" id="pipeline-run-single-btn" style="display:none;">▶ Run Single Phase</button>
+          </div>
+        </div>
+
         <!-- Step rows -->
-        <div class="steps-container">
+        <div class="steps-container" id="pipeline-steps-container" style="display:none;">
 
           <div id="step-row-1" class="step-row">
             <span class="step-label">Preparing Images</span>
@@ -104,23 +192,38 @@
           </div>
 
           <div id="step-row-2" class="step-row">
-            <span class="step-label">COLMAP SfM</span>
+            <span class="step-label">COLMAP Sparse</span>
             <div class="step-bar"><div class="step-bar-fill"></div></div>
             <span class="step-status">Pending</span>
           </div>
 
-          <div id="step-row-3" class="step-row">
+          <div id="step-row-3" class="step-row step-optional" style="display:none;">
+            <span class="step-label">COLMAP Dense (Optional)</span>
+            <div class="step-bar"><div class="step-bar-fill"></div></div>
+            <span class="step-status">Skipped</span>
+          </div>
+
+          <div id="step-row-4" class="step-row">
             <span class="step-label">3DGS Training</span>
             <div class="step-bar"><div class="step-bar-fill"></div></div>
             <span class="step-status">Pending</span>
           </div>
 
-          <div id="step-row-4" class="step-row">
+          <div id="step-row-5" class="step-row">
             <span class="step-label">Segmentation</span>
             <div class="step-bar"><div class="step-bar-fill"></div></div>
             <span class="step-status">Pending</span>
           </div>
 
+        </div>
+
+        <!-- Phase control (Pause/Continue) -->
+        <div id="phase-control" class="phase-control" style="display:none;">
+          <div class="phase-summary" id="phase-summary"></div>
+          <div class="phase-actions">
+            <button class="btn btn-primary" id="phase-continue-btn">Continue to <span id="next-phase-label">Next Phase</span> →</button>
+            <button class="btn btn-secondary" id="phase-run-remaining-btn">Run All Remaining ▶▶</button>
+          </div>
         </div>
 
         <!-- Log output -->
@@ -130,6 +233,12 @@
         <div class="pipeline-actions">
           <button class="btn btn-secondary" id="pipeline-home-btn">← Back to Home</button>
           <button class="btn btn-primary"   id="pipeline-view-btn" disabled>View in Renderer →</button>
+        </div>
+
+        <!-- Results Panel -->
+        <div id="results-panel" class="results-panel" style="margin-top: 28px; padding: 16px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 8px; display: none;">
+          <h3 style="margin-top: 0; color: #4ade80; font-size: 1rem;">Available Results</h3>
+          <div id="results-list" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;"></div>
         </div>
 
       </div>
