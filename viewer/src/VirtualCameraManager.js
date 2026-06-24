@@ -504,7 +504,7 @@ export class VirtualCameraManager {
                 // focal length = (height / 2) / tan(fov/2)
                 const fovRad = (60 * Math.PI) / 180;
                 const fy = (height / 2) / Math.tan(fovRad / 2);
-                const fx = fy * (width / height);
+                const fx = fy;
 
                 // Extrinsics: camera-to-world rotation for the carver
                 const vm = exportCam.matrixWorldInverse.elements; 
