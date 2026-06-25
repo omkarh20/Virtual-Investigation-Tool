@@ -9,7 +9,7 @@
 
 import { router } from './router.js';
 
-const BACKEND = 'http://localhost:8000';
+const BACKEND = `http://${window.location.hostname}:8000`;
 
 export function initHomePage() {
     // ── Element refs ─────────────────────────────────────────────────────────

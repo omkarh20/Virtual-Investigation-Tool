@@ -12,8 +12,8 @@
 
 import { router } from './router.js';
 
-const BACKEND_URL = 'http://localhost:8000';
-const BACKEND_WS  = 'ws://localhost:8000';
+const BACKEND_URL = `http://${window.location.hostname}:8000`;
+const BACKEND_WS  = `ws://${window.location.hostname}:8000`;
 
 const STEPS = [
     { id: 1, label: 'Preparing Images' },

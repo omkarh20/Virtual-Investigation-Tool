@@ -20,44 +20,26 @@ export class ManifestLoader {
             }
         }
 
-        // Dummy Data for testing UI and layout since we don't have .ply files
-        console.log("Using dummy manifest data");
+        // Auto-load test.splat from the public folder
+        console.log("Loading test.splat from public folder");
         return new Promise((resolve) => {
             setTimeout(() => {
                 resolve({
-                    scene_id: "dummy-scene-123",
+                    scene_id: "test-scene",
+                    baseUrl: "", // Base URL is empty so it fetches from the root (public folder)
                     segments: [
                         {
-                            id: 0,
-                            label: "background",
-                            file: "dummy_bg.ply",
-                            collision: "dummy_bg.glb",
-                            bbox: { min: [-5, 0, -5], max: [5, 0.1, 5] },
-                            centroid: [0, 0, 0],
-                            movable: false
-                        },
-                        {
                             id: 1,
-                            label: "knife",
-                            file: "dummy_knife.ply",
-                            collision: "dummy_knife.glb",
-                            bbox: { min: [-0.1, 0, -0.1], max: [0.1, 0.05, 0.1] },
-                            centroid: [-1, 0.5, -1],
-                            movable: true
-                        },
-                        {
-                            id: 2,
-                            label: "chair",
-                            file: "dummy_chair.ply",
-                            collision: "dummy_chair.glb",
-                            bbox: { min: [-0.5, 0, -0.5], max: [0.5, 1.5, 0.5] },
-                            centroid: [2, 0.75, 1],
+                            label: "My 3D Model",
+                            file: "test_splat.ply",
+                            collision: "test.glb", // Optional, will just fail gracefully if missing
+                            bbox: { min: [-5, -5, -5], max: [5, 5, 5] },
+                            centroid: [0, 0, 0],
                             movable: true
                         }
-                    ],
-                    scene_collision: "dummy_scene.glb"
+                    ]
                 });
-            }, 500); // simulate network delay
+            }, 500);
         });
     }
 }
