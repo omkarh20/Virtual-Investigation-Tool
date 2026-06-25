@@ -141,11 +141,12 @@ export class SceneBuilder {
             geometry.translate(-segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
 
             const material = new THREE.MeshBasicMaterial({ 
-                color: segment.movable ? 0x00ff00 : 0x444444, 
-                wireframe: false, // Solid instead of wireframe
+                color: color, 
+                wireframe: false,
                 transparent: true,
-                opacity: 0.15,    // Light opacity so we can still see the gaussians inside
-                depthWrite: false // Prevents sorting issues with splats
+                opacity: 0.3,    
+                depthWrite: false, 
+                visible: this.interactionMode
             });
             const hitbox = new THREE.Mesh(geometry, material);
 
@@ -237,6 +238,7 @@ export class SceneBuilder {
                 if (hitbox.userData.edgeHelper) {
                     if (hitbox.userData.id === this.selectedId) continue; // skip selected
                     hitbox.userData.edgeHelper.visible = this.interactionMode;
+                    hitbox.material.visible = this.interactionMode;
                 }
             }
 
@@ -272,6 +274,8 @@ export class SceneBuilder {
         if (hitbox.userData.edgeHelper) {
             hitbox.userData.edgeHelper.material.color.setHex(0x22ff44);
             hitbox.userData.edgeHelper.visible = true;
+            hitbox.material.color.setHex(0x22ff44);
+            hitbox.material.visible = true;
         }
 
         // Reset gizmo mode to translate by default upon selection
@@ -302,6 +306,8 @@ export class SceneBuilder {
             if (hitbox.userData.edgeHelper) {
                 hitbox.userData.edgeHelper.material.color.setHex(hitbox.userData.originalColor);
                 hitbox.userData.edgeHelper.visible = this.interactionMode;
+                hitbox.material.color.setHex(hitbox.userData.originalColor);
+                hitbox.material.visible = this.interactionMode;
             }
         }
 

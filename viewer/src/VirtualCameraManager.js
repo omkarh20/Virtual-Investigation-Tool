@@ -76,7 +76,7 @@ export class VirtualCameraManager {
 
         this.previewToggle.addEventListener('change', () => this.updatePreview());
         this.countInput.addEventListener('change', () => this.updatePreview());
-        
+
         if (this.standoffInput) {
             this.standoffInput.addEventListener('input', () => {
                 if (this.standoffValText) this.standoffValText.innerText = `${this.standoffInput.value} units`;
@@ -95,7 +95,7 @@ export class VirtualCameraManager {
 
     updatePoiList() {
         if (!this.poiListContainer) return;
-        
+
         if (this.pois.length === 0) {
             this.poiListContainer.innerHTML = '<p style="font-size: 0.8rem; color: #cbd5e1; text-align: center; margin: 5px 0;">No markers placed.</p>';
             return;
@@ -191,7 +191,7 @@ export class VirtualCameraManager {
                 this.updatePreview();
             }
         });
-        
+
         // Update list coordinates when drag finishes
         this.transformControls.addEventListener('dragging-changed', (event) => {
             if (!event.value && this.active && !this.isExporting) {
@@ -206,7 +206,7 @@ export class VirtualCameraManager {
         const sphere = new THREE.Mesh(geometry, material);
         sphere.position.copy(position);
         sphere.renderOrder = 999; // Draw on top
-        
+
         this.scene.add(sphere);
         this.pois.push(sphere);
 
@@ -301,7 +301,7 @@ export class VirtualCameraManager {
             for (let pi = 0; pi < this.pois.length; pi++) {
                 const count = pi === this.pois.length - 1 ? closeupTotal - perPoi * pi : perPoi;
                 const positions = this.generateSphereBandFibonacci(this.pois[pi].position, closeupRadius, count, 5, 75);
-                
+
                 positions.forEach(pos => {
                     cameras.push({ position: pos, target: this.pois[pi].position.clone(), tier: 'poi' });
                 });
@@ -326,12 +326,12 @@ export class VirtualCameraManager {
         if (!this.active || !this.previewToggle.checked) return;
 
         const cameras = this.buildVirtualCameraList();
-        
+
         const [w, h] = this.resSelect.value.split('x').map(Number);
         const aspect = w / h;
         const fov = 60; // Assuming 60 deg FOV for export
         const fovRad = (fov * Math.PI) / 180;
-        
+
         const far = 0.5; // Draw small frustums
         const hFar = 2 * Math.tan(fovRad / 2) * far;
         const wFar = hFar * aspect;
@@ -344,7 +344,7 @@ export class VirtualCameraManager {
 
         cameras.forEach(cam => {
             m.lookAt(cam.position, cam.target, up);
-            
+
             // Three.js cameras look down -Z. We need a quaternion for the frustum lines
             const quat = new THREE.Quaternion().setFromRotationMatrix(m);
 
@@ -361,7 +361,7 @@ export class VirtualCameraManager {
             points.push(p1, p2, p2, p3, p3, p4, p4, p1);
 
             const geometry = new THREE.BufferGeometry().setFromPoints(points);
-            const material = new THREE.LineBasicMaterial({ 
+            const material = new THREE.LineBasicMaterial({
                 color: cam.tier === 'global' ? colorGlobal : colorPoi,
                 transparent: true,
                 opacity: 0.6
@@ -411,7 +411,7 @@ export class VirtualCameraManager {
             zip = new JSZip();
             zipImages = zip.folder("images");
         }
-        
+
         const [width, height] = this.resSelect.value.split('x').map(Number);
         const cameras = this.buildVirtualCameraList();
         const total = cameras.length;
@@ -426,7 +426,7 @@ export class VirtualCameraManager {
         this.transformControls.detach();
         this.pois.forEach(p => p.visible = false);
         this.previewLines.forEach(l => l.visible = false);
-        
+
         // Save original scene state
         const originalBg = this.scene.background;
         this.scene.background = new THREE.Color(0xffffff); // White background for YOLO/SAM
@@ -439,7 +439,7 @@ export class VirtualCameraManager {
         const imgData = ctx.createImageData(width, height);
 
         const cameraEntries = [];
-        
+
         // Setup the export camera
         const exportCam = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
 
@@ -455,14 +455,14 @@ export class VirtualCameraManager {
                 // 1. Render once to trigger the async splat sorting worker
                 this.renderer.setRenderTarget(renderTarget);
                 this.renderer.render(this.scene, exportCam);
-                
+
                 // 2. Yield the main thread to allow the WebWorker to finish sorting
                 // 100ms is a safe, robust duration that ensures the worker completes 
                 // even on slower machines, without needing internal API hooks.
                 await new Promise(resolve => setTimeout(resolve, 100));
 
                 // 3. Render a second time to draw the newly sorted splats
-                this.renderer.render(this.scene, exportCam); 
+                this.renderer.render(this.scene, exportCam);
 
                 // Read pixels
                 const buffer = new Uint8Array(width * height * 4);
@@ -488,7 +488,7 @@ export class VirtualCameraManager {
 
                 // Compress to PNG Blob
                 const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                
+
                 // Write to file or ZIP
                 const imgName = `${String(i).padStart(5, '0')}.png`;
                 if (!useZip) {
@@ -507,7 +507,7 @@ export class VirtualCameraManager {
                 const fx = fy;
 
                 // Extrinsics: camera-to-world rotation for the carver
-                const vm = exportCam.matrixWorldInverse.elements; 
+                const vm = exportCam.matrixWorldInverse.elements;
                 // Three.js stores matrices column-major: element index = col*4 + row
                 //
                 // R_c2w_three (camera-to-world in Three.js space) is the transpose of
@@ -524,9 +524,9 @@ export class VirtualCameraManager {
                 //
                 // Combined: rotation = M * R_c2w_three * M
                 const rotation = [
-                    [ vm[0], -vm[1], -vm[2]],
-                    [-vm[4],  vm[5],  vm[6]],
-                    [-vm[8],  vm[9],  vm[10]]
+                    [vm[0], -vm[1], -vm[2]],
+                    [-vm[4], vm[5], vm[6]],
+                    [-vm[8], vm[9], vm[10]]
                 ];
 
                 cameraEntries.push({
@@ -577,7 +577,7 @@ export class VirtualCameraManager {
             this.scene.background = originalBg;
             this.pois.forEach(p => p.visible = true);
             this.updatePreview(); // restores preview lines based on toggle
-            
+
             this.isExporting = false;
             this.exportBtn.disabled = false;
         }
