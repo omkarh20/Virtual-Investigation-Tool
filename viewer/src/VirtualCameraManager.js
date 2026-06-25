@@ -85,6 +85,11 @@ export class VirtualCameraManager {
         }
 
         this.exportBtn.addEventListener('click', () => this.exportCameras());
+
+        this.segmentThisBtn = document.getElementById('vc-segment-this-btn');
+        if (this.segmentThisBtn) {
+            this.segmentThisBtn.addEventListener('click', () => this.autoSegmentCurrentView());
+        }
     }
 
     updatePlaceModeUI() {
@@ -580,6 +585,155 @@ export class VirtualCameraManager {
 
             this.isExporting = false;
             this.exportBtn.disabled = false;
+        }
+    }
+
+    async autoSegmentCurrentView() {
+        this.statusText.innerText = "Capturing view for segmentation...";
+        this.segmentThisBtn.disabled = true;
+        
+        const [width, height] = this.resSelect.value.split('x').map(Number);
+        
+        // Hide gizmos and POIs
+        this.transformControls.detach();
+        this.pois.forEach(p => p.visible = false);
+        this.previewLines.forEach(l => l.visible = false);
+        
+        const originalBg = this.scene.background;
+        this.scene.background = new THREE.Color(0xffffff);
+
+        // Render to offscreen canvas
+        const renderTarget = new THREE.WebGLRenderTarget(width, height, {
+            format: THREE.RGBAFormat,
+            type: THREE.UnsignedByteType
+        });
+
+        const exportCam = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
+        exportCam.position.copy(this.camera.position);
+        exportCam.quaternion.copy(this.camera.quaternion);
+        exportCam.updateMatrixWorld();
+
+        this.renderer.setRenderTarget(renderTarget);
+        this.renderer.render(this.scene, exportCam);
+        await new Promise(resolve => setTimeout(resolve, 100)); // let sorting finish
+        this.renderer.render(this.scene, exportCam);
+
+        const buffer = new Uint8Array(width * height * 4);
+        this.renderer.readRenderTargetPixels(renderTarget, 0, 0, width, height, buffer);
+        
+        const rawImgData = new ImageData(new Uint8ClampedArray(buffer), width, height);
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+        tempCanvas.getContext('2d').putImageData(rawImgData, 0, 0);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, width, height);
+        ctx.save();
+        ctx.translate(0, height);
+        ctx.scale(1, -1);
+        ctx.drawImage(tempCanvas, 0, 0);
+        ctx.restore();
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        
+        // Restore scene
+        this.renderer.setRenderTarget(null);
+        this.scene.background = originalBg;
+        this.pois.forEach(p => p.visible = true);
+        this.updatePreview();
+
+        try {
+            const formData = new FormData();
+            formData.append('file', blob, 'capture.png');
+            
+            const promptStr = prompt("Enter object to segment (or leave blank for auto):", "");
+            if (promptStr) {
+                formData.append('prompt', promptStr);
+            }
+
+            this.statusText.innerText = "Running object detection...";
+            const res = await fetch('http://localhost:8000/segment-view', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                throw new Error(`Server returned status ${res.status}`);
+            }
+
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+
+            if (!data.detections || data.detections.length === 0) {
+                this.statusText.innerText = "No objects detected.";
+                return;
+            }
+
+            const bestObj = data.detections[0];
+            console.log("Detected object:", bestObj);
+
+            // Calculate 3D centroid
+            const ndcX = (bestObj.center_x / width) * 2 - 1;
+            const ndcY = -(bestObj.center_y / height) * 2 + 1;
+            
+            this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), exportCam);
+            
+            // Assume the object is on the ground plane, or use a default distance if looking straight
+            const intersectPoint = new THREE.Vector3();
+            let distanceToObj = 2.5; // default fallback
+            
+            if (this.raycaster.ray.intersectPlane(this.groundPlane, intersectPoint)) {
+                // Check if the intersect point is behind the camera (which means looking away from ground)
+                const dirToIntersect = intersectPoint.clone().sub(exportCam.position).normalize();
+                if (dirToIntersect.dot(this.raycaster.ray.direction) > 0) {
+                     distanceToObj = exportCam.position.distanceTo(intersectPoint);
+                } else {
+                     intersectPoint.copy(exportCam.position).add(this.raycaster.ray.direction.clone().multiplyScalar(distanceToObj));
+                }
+            } else {
+                intersectPoint.copy(exportCam.position).add(this.raycaster.ray.direction.clone().multiplyScalar(distanceToObj));
+            }
+            
+            // Calculate optimal standoff distance
+            // We want the object to occupy ~70% of the screen width
+            const targetWidthPx = width * 0.7;
+            const bbWidthPx = bestObj.width;
+            
+            // new_dist = current_dist * (current_px / target_px)
+            let optimalDistance = distanceToObj * (bbWidthPx / targetWidthPx);
+            
+            // Clamp to reasonable values
+            optimalDistance = Math.max(0.5, Math.min(optimalDistance, 10.0));
+            
+            // Clear existing POIs and add the new one
+            this.pois.forEach(poi => {
+                this.scene.remove(poi);
+                poi.geometry.dispose();
+                poi.material.dispose();
+            });
+            this.pois = [];
+            
+            this.createPOI(intersectPoint);
+            
+            // Update UI
+            if (this.standoffInput) {
+                this.standoffInput.value = optimalDistance.toFixed(1);
+                if (this.standoffValText) this.standoffValText.innerText = `${optimalDistance.toFixed(1)} units`;
+            }
+            
+            this.updatePreview();
+            this.statusText.innerText = `Found ${bestObj.class}! Auto-set camera radius to ${optimalDistance.toFixed(1)}.`;
+            
+        } catch (err) {
+            console.error(err);
+            this.statusText.innerText = `Error: ${err.message}`;
+        } finally {
+            this.segmentThisBtn.disabled = false;
         }
     }
 }
