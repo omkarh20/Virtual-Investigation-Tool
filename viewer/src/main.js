@@ -1,9 +1,12 @@
 import './style.css';
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { SparkRenderer } from '@sparkjsdev/spark';
 import { SceneBuilder } from './SceneBuilder.js';
+import { PhysicsManager } from './PhysicsManager.js';
+import { VRSessionManager } from './VRSessionManager.js';
 import { VirtualCameraManager } from './VirtualCameraManager.js';
 import { FPSControls } from './FPSControls.js';
 import { router } from './router.js';
@@ -99,12 +102,16 @@ function initRenderer() {
         }
     }
 
-    // 7. Scene Builder
-    const sceneBuilder = new SceneBuilder(scene, camera, transformControls, disableControls, enableControls);
+    // 7. Scene Builder & Physics
+    const physicsManager = new PhysicsManager();
+    const sceneBuilder = new SceneBuilder(scene, camera, transformControls, disableControls, enableControls, physicsManager);
     sceneBuilder.loadFromManifest();
 
     // 8. Virtual Camera Manager
     const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls);
+
+    // 8.5. VR Manager
+    const vrManager = new VRSessionManager(renderer, scene, camera, sceneBuilder.hitboxes, physicsManager);
 
     // 9. File Upload
     const loadFileBtn = document.getElementById('load-file-btn');
@@ -118,6 +125,32 @@ function initRenderer() {
         });
     }
 
+    // 9.5 Physics Toggle
+    const togglePhysicsBtn = document.getElementById('toggle-physics-btn');
+    window.physicsEnabled = false; // default off
+    if (togglePhysicsBtn) {
+        togglePhysicsBtn.addEventListener('click', () => {
+            window.physicsEnabled = !window.physicsEnabled;
+            togglePhysicsBtn.innerText = `Physics: ${window.physicsEnabled ? 'ON' : 'OFF'}`;
+            togglePhysicsBtn.style.backgroundColor = window.physicsEnabled ? '#2563eb' : '#4b5563';
+
+            if (window.physicsEnabled && physicsManager) {
+                // Wake up all bodies so they start falling!
+                for (const [id, body] of physicsManager.bodies.entries()) {
+                    body.wakeUp();
+                }
+            } else if (physicsManager) {
+                // Freeze them when turned off
+                for (const [id, body] of physicsManager.bodies.entries()) {
+                    if (body.mass > 0) {
+                        body.velocity.set(0,0,0);
+                        body.angularVelocity.set(0,0,0);
+                    }
+                }
+            }
+        });
+    }
+
     // 10. Animation Loop & FPS counter
     const fpsCounter = document.getElementById('fps-counter');
     const clock = new THREE.Clock();
@@ -125,8 +158,6 @@ function initRenderer() {
     let frames = 0;
 
     function animate() {
-        requestAnimationFrame(animate);
-
         const delta = clock.getDelta();
 
         if (activeControls === orbitControls) {
@@ -134,6 +165,14 @@ function initRenderer() {
         } else {
             fpsControls.update(delta);
         }
+
+        if (window.physicsEnabled) {
+            physicsManager.update(delta, sceneBuilder.hitboxes);
+            sceneBuilder.syncSplatsToHitboxes();
+        }
+        
+        // VR controller step
+        vrManager.update();
 
         // Pause main render while VirtualCameraManager is exporting
         if (!vcManager.isExporting) {
@@ -150,7 +189,7 @@ function initRenderer() {
         }
     }
 
-    animate();
+    renderer.setAnimationLoop(animate);
 
     // 11. Handle resize
     window.addEventListener('resize', () => {

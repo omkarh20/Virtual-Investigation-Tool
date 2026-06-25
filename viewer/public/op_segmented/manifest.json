@@ -1,0 +1,30 @@
+{
+  "scene_id": "my_job_id",
+  "segments": [
+    {
+      "id": 0,
+      "label": "background",
+      "file": "segment_0_background.ply",
+      "collision": "collision_0.glb",
+      "bbox": {
+        "min": [
+          -2.0782554149627686,
+          -2.5234453678131104,
+          -1.7442333698272705
+        ],
+        "max": [
+          2.601489543914795,
+          0.009935321286320686,
+          2.9546890258789062
+        ]
+      },
+      "centroid": [
+        0.2616170644760132,
+        -1.256754994392395,
+        0.6052278280258179
+      ],
+      "movable": false
+    }
+  ],
+  "scene_collision": "scene_collision.glb"
+}
