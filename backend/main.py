@@ -4,6 +4,7 @@ import shutil
 import uuid
 import glob
 import zipfile
+import json
 from typing import Any
 
 from runners.preprocessor import process_inputs
@@ -32,6 +33,34 @@ app.add_middleware(
 jobs: dict[str, dict[str, Any]] = {}
 progress_queues: dict[str, asyncio.Queue] = {}
 JOBS_DIR = os.environ.get("JOBS_DIR", "./jobs")
+os.makedirs(JOBS_DIR, exist_ok=True)
+
+def save_job_metadata(job_id: str):
+    if job_id in jobs:
+        job_dir = os.path.join(JOBS_DIR, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        meta_path = os.path.join(job_dir, "metadata.json")
+        try:
+            with open(meta_path, "w") as f:
+                json.dump(jobs[job_id], f, indent=4)
+        except Exception as e:
+            print(f"Failed to save metadata for {job_id}: {e}")
+
+def load_all_metadata():
+    if not os.path.exists(JOBS_DIR):
+        return
+    for item in os.listdir(JOBS_DIR):
+        job_dir = os.path.join(JOBS_DIR, item)
+        if os.path.isdir(job_dir):
+            meta_path = os.path.join(job_dir, "metadata.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r") as f:
+                        jobs[item] = json.load(f)
+                except Exception as e:
+                    print(f"Failed to load metadata for {item}: {e}")
+
+load_all_metadata()
 
 def make_job_dir(job_id: str) -> str:
     path = os.path.join(JOBS_DIR, job_id, "input")
@@ -54,6 +83,7 @@ PHASES = [
 async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
     job = jobs[job_id]
     job["status"] = "running"
+    save_job_metadata(job_id)
     config = job["config"]
     enable_dense = config.get("colmap_dense_enable", False)
     
@@ -109,6 +139,7 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
             if "phase_results" not in job:
                 job["phase_results"] = {}
             job["phase_results"][str(pid)] = result
+            save_job_metadata(job_id)
             
             await push(job_id, {
                 "type": "phase_complete",
@@ -127,11 +158,13 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                     
                 if is_end:
                     job["status"] = "paused"
+                    save_job_metadata(job_id)
                     await push(job_id, {"type": "phase_paused", "next_phase": None, "next_label": None})
                     return
                 elif next_pid <= len(PHASES):
                     next_label = PHASES[next_pid - 1]["label"]
                     job["status"] = "paused"
+                    save_job_metadata(job_id)
                     await push(job_id, {
                         "type": "phase_paused",
                         "next_phase": next_pid,
@@ -142,10 +175,12 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
         except Exception as e:
             await push(job_id, {"type": "log", "step": pid, "progress": 100, "text": f"Error: {e}"})
             job["status"] = "failed"
+            save_job_metadata(job_id)
             await push(job_id, None)
             return
 
     job["status"] = "done"
+    save_job_metadata(job_id)
     await push(job_id, {
         "type": "done",
         "progress": 100,
@@ -174,6 +209,7 @@ async def upload(file: UploadFile = File(...)) -> JSONResponse:
         "run_mode": "step",
         "phase_results": {}
     }
+    save_job_metadata(job_id)
     progress_queues[job_id] = asyncio.Queue()
 
     return JSONResponse({"job_id": job_id, "filename": file.filename})
@@ -196,6 +232,7 @@ async def run_pipeline(body: dict) -> JSONResponse:
     jobs[job_id]["config"] = config
     jobs[job_id]["run_mode"] = mode
     jobs[job_id]["current_phase"] = start_phase
+    save_job_metadata(job_id)
 
     # If starting at phase 4 (3DGS), we need to extract the uploaded zip containing images & sparse
     if start_phase == 4:
@@ -225,6 +262,7 @@ async def continue_pipeline(body: dict) -> JSONResponse:
 
     mode = body.get("mode", "step")
     jobs[job_id]["run_mode"] = mode
+    save_job_metadata(job_id)
 
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
@@ -360,6 +398,33 @@ async def export_vr(body: dict) -> JSONResponse:
     except Exception as e:
         print(f"[Error] VR Export failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+def get_directory_tree(path: str) -> dict:
+    tree = {"name": os.path.basename(path), "type": "directory", "children": []}
+    try:
+        for item in sorted(os.listdir(path)):
+            item_path = os.path.join(path, item)
+            if os.path.isdir(item_path):
+                tree["children"].append(get_directory_tree(item_path))
+            else:
+                size = os.path.getsize(item_path)
+                tree["children"].append({"name": item, "type": "file", "size": size})
+    except Exception as e:
+        pass
+    return tree
+
+@app.get("/jobs/{job_id}/tree")
+async def get_job_tree(job_id: str) -> JSONResponse:
+    job = jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+    
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    if not os.path.exists(job_dir):
+        return JSONResponse({"error": "Job directory not found"}, status_code=404)
+        
+    tree = get_directory_tree(job_dir)
+    return JSONResponse(tree)
 
 os.makedirs(JOBS_DIR, exist_ok=True)
 app.mount("/jobs", StaticFiles(directory=JOBS_DIR), name="jobs")

@@ -1,5 +1,6 @@
 # Data & Outputs
 /data/
+data
 /datasets/
 *.ply
 *.mp4

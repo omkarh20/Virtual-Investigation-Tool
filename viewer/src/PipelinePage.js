@@ -27,6 +27,8 @@ export function initPipelinePage() {
     let ws = null;
     let currentJobId = null;
     let isAdvancedMode = false;
+    let currentLogDetails = null;
+    let currentLogContent = null;
 
     // ── Element refs ──────────────────────────────────────────────────────────
     const jobTitle        = document.getElementById('pipeline-job-title');
@@ -248,14 +250,21 @@ export function initPipelinePage() {
             
             completedPhases = job.completed_phases || [];
             renderResultsPanel();
+            fetchAndRenderTree();
 
             if (job.status === "uploaded") {
                 showConfig();
             } else {
                 showProgress();
+                resetSteps();
+                completedPhases.forEach(pid => markStep(pid, 'done', 100));
+                
                 startWatching(jobId);
                 if (job.status === "paused") {
                     phaseControl.style.display = 'flex';
+                } else if (job.status === "done") {
+                    markAllDone();
+                    if (viewBtn) viewBtn.disabled = false;
                 }
             }
         } catch (e) {
@@ -394,7 +403,9 @@ export function initPipelinePage() {
     function startWatching(jobId) {
         disconnectWS();
         
-        if (logEl) logEl.textContent = '';
+        currentLogDetails = null;
+        currentLogContent = null;
+        if (logEl) logEl.innerHTML = '';
         
         ws = new WebSocket(`${BACKEND_WS}/progress/${jobId}`);
 
@@ -415,19 +426,20 @@ export function initPipelinePage() {
     function handleMessage(msg) {
         if (msg.type === 'step_start') {
             markStep(msg.step, 'active', 0);
-            appendLog(`▶ ${msg.label}`);
+            appendLog(`Starting: ${msg.label}...`, true, false, msg.label);
             if (phaseControl) phaseControl.style.display = 'none';
         } else if (msg.type === 'log') {
             updateStepProgress(msg.step, msg.progress);
             appendLog(msg.text);
         } else if (msg.type === 'phase_complete') {
             markStep(msg.phase, 'done', 100);
-            appendLog(`✓ ${msg.label} complete.`);
+            appendLog(`✓ ${msg.label} complete.`, false, true);
             if (phaseSummary) phaseSummary.innerHTML = `<strong>${msg.label} finished.</strong>`;
             if (!completedPhases.includes(msg.phase)) {
                 completedPhases.push(msg.phase);
             }
             renderResultsPanel();
+            fetchAndRenderTree();
         } else if (msg.type === 'phase_paused') {
             if (msg.next_phase === null) {
                 // Stopped after a single phase via Advanced Mode end_phase
@@ -529,9 +541,93 @@ export function initPipelinePage() {
         });
     }
 
-    function appendLog(text) {
+    function appendLog(text, isPhaseStart = false, isPhaseEnd = false, phaseLabel = "") {
         if (!logEl) return;
-        logEl.textContent += text + '\n';
+        
+        if (isPhaseStart) {
+            currentLogDetails = document.createElement('details');
+            currentLogDetails.open = true;
+            
+            const summary = document.createElement('summary');
+            summary.textContent = phaseLabel || text;
+            currentLogDetails.appendChild(summary);
+            
+            currentLogContent = document.createElement('div');
+            currentLogContent.className = 'log-content';
+            currentLogContent.textContent = text + '\n';
+            currentLogDetails.appendChild(currentLogContent);
+            
+            logEl.appendChild(currentLogDetails);
+        } else if (isPhaseEnd) {
+            if (currentLogContent) {
+                currentLogContent.textContent += text + '\n';
+            }
+            if (currentLogDetails) {
+                currentLogDetails.open = false; // auto collapse
+            }
+        } else {
+            if (!currentLogContent) {
+                const fallback = document.createElement('div');
+                fallback.className = 'log-content';
+                fallback.textContent = text + '\n';
+                logEl.appendChild(fallback);
+                currentLogContent = fallback;
+            } else {
+                currentLogContent.textContent += text + '\n';
+            }
+        }
+        
         logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // ── Directory Tree Fetching ────────────────────────────────────────────────
+    const treePanel = document.getElementById('project-tree-panel');
+    const treeContainer = document.getElementById('project-tree-container');
+
+    async function fetchAndRenderTree() {
+        if (!currentJobId || currentJobId === 'new') return;
+        try {
+            const res = await fetch(`${BACKEND_URL}/jobs/${currentJobId}/tree`);
+            if (!res.ok) return;
+            const treeData = await res.json();
+            if (treePanel) treePanel.style.display = 'block';
+            if (treeContainer) {
+                treeContainer.innerHTML = '';
+                treeContainer.appendChild(buildTreeHTML(treeData));
+            }
+        } catch (e) {
+            console.error("Failed to fetch tree:", e);
+        }
+    }
+
+    function buildTreeHTML(node) {
+        if (node.type === 'file') {
+            const li = document.createElement('li');
+            li.className = 'tree-file';
+            const kb = (node.size / 1024).toFixed(1);
+            li.textContent = `${node.name} (${kb} KB)`;
+            return li;
+        } else {
+            const li = document.createElement('li');
+            
+            const details = document.createElement('details');
+            details.open = true;
+            
+            const summary = document.createElement('summary');
+            summary.className = 'tree-folder';
+            summary.textContent = node.name;
+            details.appendChild(summary);
+            
+            const ul = document.createElement('ul');
+            if (node.children) {
+                node.children.forEach(child => {
+                    ul.appendChild(buildTreeHTML(child));
+                });
+            }
+            details.appendChild(ul);
+            li.appendChild(details);
+            
+            return li;
+        }
     }
 }

@@ -35,6 +35,8 @@ async def process_inputs(job_id: str, input_dir: str, images_dir: str, config: d
                     ext = os.path.splitext(f)[1]
                     new_name = f"frame_{count:05d}{ext}"
                     shutil.copy(os.path.join(root, f), os.path.join(images_dir, new_name))
+                    if count % 50 == 0:
+                        await push_ws({"type": "log", "step": 1, "progress": 50, "text": f"Extracted {count} images..."})
         await push_ws({"type": "log", "step": 1, "progress": 100, "text": f"Extracted {count} images from ZIP."})
         return
 
@@ -79,6 +81,8 @@ async def process_inputs(job_id: str, input_dir: str, images_dir: str, config: d
             ext = os.path.splitext(f)[1]
             new_name = f"frame_{count:05d}{ext}"
             shutil.copy(os.path.join(input_dir, f), os.path.join(images_dir, new_name))
+            if count % 50 == 0:
+                await push_ws({"type": "log", "step": 1, "progress": 50, "text": f"Processed {count} images..."})
         await push_ws({"type": "log", "step": 1, "progress": 100, "text": f"Processed {count} images."})
         return
 

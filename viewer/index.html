@@ -227,7 +227,7 @@
         </div>
 
         <!-- Log output -->
-        <pre id="pipeline-log" class="pipeline-log"></pre>
+        <div id="pipeline-log" class="pipeline-log-container" style="background: rgba(0,0,0,0.3); border: 1px solid #374151; border-radius: 8px; padding: 12px; margin-top: 20px; max-height: 400px; overflow-y: auto;"></div>
 
         <!-- Actions -->
         <div class="pipeline-actions">
@@ -239,6 +239,12 @@
         <div id="results-panel" class="results-panel" style="margin-top: 28px; padding: 16px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 8px; display: none;">
           <h3 style="margin-top: 0; color: #4ade80; font-size: 1rem;">Available Results</h3>
           <div id="results-list" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;"></div>
+        </div>
+
+        <!-- Project Tree -->
+        <div id="project-tree-panel" class="results-panel" style="margin-top: 16px; padding: 16px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; display: none;">
+          <h3 style="margin-top: 0; color: #60a5fa; font-size: 1rem;">Project Explorer</h3>
+          <div id="project-tree-container" class="project-tree" style="margin-top: 12px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; color: #e2e8f0;"></div>
         </div>
 
       </div>

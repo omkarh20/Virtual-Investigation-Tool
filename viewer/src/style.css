@@ -417,3 +417,82 @@ option {
 .hidden {
   opacity: 0;
 }
+
+/* ── Tree and Log Details ────────────────────────────────────────────────── */
+.pipeline-log-container details {
+  margin-bottom: 4px;
+}
+.pipeline-log-container summary {
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #a5b4fc;
+  padding: 4px 0;
+  list-style: none; /* Hide default arrow */
+  display: flex;
+  align-items: center;
+}
+.pipeline-log-container summary::-webkit-details-marker {
+  display: none;
+}
+.pipeline-log-container summary::before {
+  content: "▶";
+  font-size: 0.7rem;
+  margin-right: 8px;
+  color: #6366f1;
+  transition: transform 0.2s;
+}
+.pipeline-log-container details[open] summary::before {
+  transform: rotate(90deg);
+}
+.pipeline-log-container .log-content {
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  color: #9ca3af;
+  padding: 8px 12px;
+  border-left: 2px solid #374151;
+  margin-left: 5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.project-tree ul {
+  list-style-type: none;
+  padding-left: 16px;
+  margin: 4px 0;
+}
+.project-tree li {
+  margin: 4px 0;
+  position: relative;
+}
+.project-tree li::before {
+  content: "";
+  position: absolute;
+  top: 0; left: -10px; bottom: 0;
+  border-left: 1px solid rgba(255,255,255,0.1);
+}
+.project-tree summary.tree-folder {
+  color: #93c5fd;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+}
+.project-tree summary.tree-folder::-webkit-details-marker {
+  display: none;
+}
+.project-tree summary.tree-folder::before {
+  content: "📁";
+  margin-right: 6px;
+}
+.project-tree .tree-file {
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+}
+.project-tree .tree-file::before {
+  content: "📄";
+  margin-right: 6px;
+}
