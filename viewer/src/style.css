@@ -16,6 +16,11 @@ body {
   color: #f9fafb;
 }
 
+option {
+  background-color: #1e293b;
+  color: #f9fafb;
+}
+
 /* ── Page routing ──────────────────────────────────────────────────────────── */
 .page          { display: none; width: 100vw; height: 100vh; }
 .page.active   { display: block; }

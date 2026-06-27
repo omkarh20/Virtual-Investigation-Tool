@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { ViewHelper } from 'three/examples/jsm/helpers/ViewHelper.js';
 import { SparkRenderer } from '@sparkjsdev/spark';
 import { SceneBuilder } from './SceneBuilder.js';
 import { VirtualCameraManager } from './VirtualCameraManager.js';
@@ -33,6 +34,7 @@ function initRenderer() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.autoClear = false;
     appContainer.appendChild(renderer.domElement);
 
     // 2. SparkRenderer
@@ -81,6 +83,16 @@ function initRenderer() {
         });
     }
 
+    const resetCameraBtn = document.getElementById('reset-camera-btn');
+    if (resetCameraBtn) {
+        resetCameraBtn.addEventListener('click', () => {
+            camera.position.set(0, 1.5, 3);
+            orbitControls.target.set(0, 0, 0);
+            orbitControls.update();
+            camera.lookAt(0, 0, 0);
+        });
+    }
+
     // 6. Transform Controls (Gizmo)
     const transformControls = new TransformControls(camera, renderer.domElement);
     transformControls.setMode('translate');
@@ -106,6 +118,14 @@ function initRenderer() {
     // 8. Virtual Camera Manager
     const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls, orbitControls);
 
+    // View Helper Gizmo
+    const viewHelper = new ViewHelper(camera, renderer.domElement);
+    
+    renderer.domElement.addEventListener('pointerup', (event) => {
+        viewHelper.center.copy(orbitControls.target);
+        viewHelper.handleClick(event);
+    });
+
     // 9. File Upload
     const loadFileBtn = document.getElementById('load-file-btn');
     const fileInput   = document.getElementById('file-input');
@@ -130,14 +150,21 @@ function initRenderer() {
         const delta = clock.getDelta();
 
         if (activeControls === orbitControls) {
-            orbitControls.update();
+            if (viewHelper.animating) {
+                viewHelper.update(delta);
+            } else {
+                orbitControls.update();
+                viewHelper.center.copy(orbitControls.target);
+            }
         } else {
             fpsControls.update(delta);
         }
 
         // Pause main render while VirtualCameraManager is exporting
         if (!vcManager.isExporting) {
+            renderer.clear();
             renderer.render(scene, camera);
+            viewHelper.render(renderer);
         }
 
         // FPS

@@ -31,8 +31,6 @@ export class VirtualCameraManager {
         this.poiListContainer = document.getElementById('vc-poi-list');
         this.countInput = document.getElementById('vc-count');
         this.resSelect = document.getElementById('vc-res');
-        this.standoffInput = document.getElementById('vc-standoff');
-        this.standoffValText = document.getElementById('vc-standoff-val');
         this.previewToggle = document.getElementById('vc-preview');
         this.clearBtn = document.getElementById('vc-clear-btn');
         this.exportBtn = document.getElementById('vc-export-btn');
@@ -75,17 +73,109 @@ export class VirtualCameraManager {
             this.updatePreview();
         });
 
-        this.previewToggle.addEventListener('change', () => this.updatePreview());
-        this.countInput.addEventListener('change', () => this.updatePreview());
+        this.previewToggle.addEventListener('change', () => {
+            const state = this.previewToggle.checked;
+            this.pois.forEach(poi => {
+                if (!poi.userData) poi.userData = {};
+                poi.userData.showFrustums = state;
+            });
+            this.updatePoiList(); // update the individual checkboxes
+            this.updatePreview();
+        });
         
-        if (this.standoffInput) {
-            this.standoffInput.addEventListener('input', () => {
-                if (this.standoffValText) this.standoffValText.innerText = `${this.standoffInput.value} units`;
+        this.countInput.addEventListener('change', () => {
+            this.recalculateCameraCounts(false); // distribute delta
+            this.updatePoiList();
+            this.updatePreview();
+        });
+
+        this.distributeBtn = document.getElementById('vc-distribute-btn');
+        if (this.distributeBtn) {
+            this.distributeBtn.addEventListener('click', () => {
+                this.recalculateCameraCounts(true); // force equal
+                this.updatePoiList();
                 this.updatePreview();
             });
         }
 
         this.exportBtn.addEventListener('click', () => this.exportCameras());
+    }
+
+    recalculateCameraCounts(distributeEqually = false) {
+        if (this.pois.length === 0) return;
+        
+        let newTotal = parseInt(this.countInput.value, 10) || 0;
+        if (newTotal < 1) newTotal = 1;
+        
+        let currentTotal = 0;
+        this.pois.forEach(p => {
+            currentTotal += (p.userData.cameraCount || 0);
+        });
+
+        if (distributeEqually) {
+            const perPoi = Math.floor(newTotal / this.pois.length);
+            let currentSum = 0;
+            this.pois.forEach((poi, index) => {
+                let count = (index === this.pois.length - 1) ? newTotal - currentSum : perPoi;
+                poi.userData.cameraCount = Math.max(1, count);
+                currentSum += poi.userData.cameraCount;
+            });
+            this.countInput.value = currentSum;
+        } else {
+            let delta = newTotal - currentTotal;
+            if (delta === 0) {
+                // Ensure no marker has 0 cameras
+                this.pois.forEach(poi => {
+                    if ((poi.userData.cameraCount || 0) === 0) {
+                        poi.userData.cameraCount = 1;
+                        newTotal += 1;
+                    }
+                });
+                if (newTotal !== currentTotal) {
+                    this.countInput.value = newTotal;
+                }
+                return;
+            }
+
+            let remainingDelta = delta;
+            let iter = 0;
+            while (remainingDelta !== 0 && iter < 10) {
+                iter++;
+                let activePois = this.pois.filter(p => remainingDelta > 0 || p.userData.cameraCount > 1);
+                if (activePois.length === 0) break; 
+                
+                let perPoiDelta = Math.trunc(remainingDelta / activePois.length);
+                if (perPoiDelta === 0) perPoiDelta = Math.sign(remainingDelta);
+
+                let deltaApplied = 0;
+                for (let i = 0; i < activePois.length; i++) {
+                    if (remainingDelta === 0) break;
+                    let poi = activePois[i];
+                    let apply = perPoiDelta;
+                    
+                    if (perPoiDelta !== 1 && perPoiDelta !== -1 && i === activePois.length - 1) {
+                        apply = remainingDelta;
+                    }
+                    
+                    let newCount = poi.userData.cameraCount + apply;
+                    if (newCount < 1) {
+                        apply = 1 - poi.userData.cameraCount;
+                        poi.userData.cameraCount = 1;
+                    } else {
+                        poi.userData.cameraCount = newCount;
+                    }
+                    
+                    deltaApplied += apply;
+                    remainingDelta -= apply;
+                }
+                if (deltaApplied === 0) break;
+            }
+            
+            // Re-sum to ensure exact match
+            let finalSum = 0;
+            this.pois.forEach(p => finalSum += p.userData.cameraCount);
+            this.countInput.value = finalSum;
+        }
     }
 
     updatePlaceModeUI() {
@@ -104,113 +194,32 @@ export class VirtualCameraManager {
 
         this.poiListContainer.innerHTML = '';
         this.pois.forEach((poi, index) => {
+            const isSelected = this.transformControls.object === poi;
+
+            const container = document.createElement('div');
+            container.style.backgroundColor = isSelected ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)';
+            container.style.borderRadius = '3px';
+            container.style.marginBottom = '4px';
+
             const row = document.createElement('div');
             row.style.display = 'flex';
             row.style.justifyContent = 'space-between';
             row.style.alignItems = 'center';
             row.style.padding = '4px 8px';
-            row.style.marginBottom = '2px';
-            row.style.backgroundColor = 'rgba(255,255,255,0.05)';
-            row.style.borderRadius = '3px';
             row.style.cursor = 'pointer';
 
             row.addEventListener('click', () => {
-                this.transformControls.setMode('translate');
-                this.transformControls.attach(poi);
+                if (!isSelected) {
+                    this.transformControls.setMode('translate');
+                    this.transformControls.attach(poi);
+                    this.updatePoiList();
+                }
             });
 
             const label = document.createElement('span');
             label.innerText = `Marker ${index + 1} (${poi.position.x.toFixed(1)}, ${poi.position.y.toFixed(1)}, ${poi.position.z.toFixed(1)})`;
             label.style.fontSize = '0.8rem';
             label.style.color = '#cbd5e1';
-
-            // Create custom standoff distance input field
-            const distInput = document.createElement('input');
-            distInput.type = 'number';
-            distInput.min = '0.1';
-            distInput.max = '10.0';
-            distInput.step = '0.1';
-            distInput.placeholder = 'def';
-            distInput.value = (poi.userData && poi.userData.standoff !== null) ? poi.userData.standoff : '';
-            distInput.style.width = '40px';
-            distInput.style.fontSize = '0.75rem';
-            distInput.style.background = 'rgba(255, 255, 255, 0.1)';
-            distInput.style.color = 'white';
-            distInput.style.border = '1px solid #4b5563';
-            distInput.style.borderRadius = '3px';
-            distInput.style.padding = '1px 3px';
-            distInput.style.marginLeft = '8px';
-            distInput.title = 'Custom standoff distance (leave empty to use global default)';
-
-            distInput.addEventListener('change', () => {
-                const val = parseFloat(distInput.value);
-                if (!isNaN(val) && val > 0) {
-                    if (!poi.userData) poi.userData = {};
-                    poi.userData.standoff = val;
-                } else {
-                    if (!poi.userData) poi.userData = {};
-                    poi.userData.standoff = null;
-                    distInput.value = '';
-                }
-                this.updatePreview();
-            });
-            distInput.addEventListener('click', (e) => e.stopPropagation());
-
-            // Create alignment buttons container
-            const axisContainer = document.createElement('div');
-            axisContainer.style.display = 'flex';
-            axisContainer.style.gap = '4px';
-            axisContainer.style.marginRight = '8px';
-            axisContainer.style.marginLeft = 'auto'; // push it to the right side of the row
-
-            ['X', 'Y', 'Z'].forEach(axis => {
-                const axisBtn = document.createElement('button');
-                axisBtn.innerText = axis;
-                axisBtn.style.backgroundColor = 'rgba(255,255,255,0.1)';
-                axisBtn.style.border = 'none';
-                axisBtn.style.color = 'white';
-                axisBtn.style.borderRadius = '3px';
-                axisBtn.style.padding = '2px 6px';
-                axisBtn.style.fontSize = '0.75rem';
-                axisBtn.style.cursor = 'pointer';
-                axisBtn.title = `Align camera view along ${axis}-axis`;
-
-                axisBtn.addEventListener('mouseenter', () => {
-                    axisBtn.style.backgroundColor = '#3b82f6';
-                });
-                axisBtn.addEventListener('mouseleave', () => {
-                    axisBtn.style.backgroundColor = 'rgba(255,255,255,0.1)';
-                });
-
-                axisBtn.addEventListener('click', (e) => {
-                    e.stopPropagation(); // prevent row click / select object
-                    
-                    // Attach transform controls to this marker
-                    this.transformControls.setMode('translate');
-                    this.transformControls.attach(poi);
-                    
-                    // Align the camera
-                    const distance = (poi.userData && poi.userData.standoff !== null)
-                        ? poi.userData.standoff
-                        : (parseFloat(this.standoffInput.value) || 2.5);
-                    if (axis === 'X') {
-                        this.camera.position.set(poi.position.x + distance, poi.position.y, poi.position.z);
-                    } else if (axis === 'Y') {
-                        // Offset by 0.0001 to prevent OrbitControls gimbal lock/flipping when looking straight down
-                        this.camera.position.set(poi.position.x, poi.position.y + distance, poi.position.z + 0.0001);
-                    } else if (axis === 'Z') {
-                        this.camera.position.set(poi.position.x, poi.position.y, poi.position.z + distance);
-                    }
-                    this.camera.lookAt(poi.position);
-                    
-                    if (this.orbitControls) {
-                        this.orbitControls.target.copy(poi.position);
-                        this.orbitControls.update();
-                    }
-                });
-
-                axisContainer.appendChild(axisBtn);
-            });
 
             const delBtn = document.createElement('button');
             delBtn.innerText = '✕';
@@ -225,10 +234,133 @@ export class VirtualCameraManager {
             });
 
             row.appendChild(label);
-            row.appendChild(distInput);
-            row.appendChild(axisContainer);
             row.appendChild(delBtn);
-            this.poiListContainer.appendChild(row);
+            container.appendChild(row);
+
+            // Create the slider below the marker if selected
+            if (isSelected) {
+                const sliderContainer = document.createElement('div');
+                sliderContainer.style.padding = '0 8px 8px 8px';
+
+                const sliderLabel = document.createElement('div');
+                sliderLabel.style.display = 'flex';
+                sliderLabel.style.justifyContent = 'space-between';
+                sliderLabel.style.fontSize = '0.75rem';
+                sliderLabel.style.color = '#cbd5e1';
+                
+                const currentDist = (poi.userData && poi.userData.standoff !== null) ? poi.userData.standoff : 2.5;
+                const distValueSpan = document.createElement('span');
+                distValueSpan.innerText = `${currentDist.toFixed(1)} units`;
+
+                sliderLabel.innerHTML = `<span>Standoff Dist:</span>`;
+                sliderLabel.appendChild(distValueSpan);
+
+                const rangeInput = document.createElement('input');
+                rangeInput.type = 'range';
+                rangeInput.min = '0.5';
+                rangeInput.max = '10.0';
+                rangeInput.step = '0.1';
+                rangeInput.value = currentDist;
+                rangeInput.style.width = '100%';
+                rangeInput.style.marginTop = '4px';
+
+                rangeInput.addEventListener('input', (e) => {
+                    e.stopPropagation();
+                    const val = parseFloat(rangeInput.value);
+                    if (!poi.userData) poi.userData = {};
+                    poi.userData.standoff = val;
+                    distValueSpan.innerText = `${val.toFixed(1)} units`;
+                    this.updatePreview();
+                });
+                
+                // Prevent drag/click events on the slider from re-triggering row selection
+                rangeInput.addEventListener('mousedown', (e) => e.stopPropagation());
+                rangeInput.addEventListener('click', (e) => e.stopPropagation());
+
+                sliderContainer.appendChild(sliderLabel);
+                sliderContainer.appendChild(rangeInput);
+
+                // --- Camera Count Input ---
+                const countContainer = document.createElement('div');
+                countContainer.style.display = 'flex';
+                countContainer.style.justifyContent = 'space-between';
+                countContainer.style.alignItems = 'center';
+                countContainer.style.fontSize = '0.75rem';
+                countContainer.style.color = '#cbd5e1';
+                countContainer.style.marginTop = '8px';
+                
+                const countLabel = document.createElement('span');
+                countLabel.innerText = 'Cameras:';
+                
+                const countInputBox = document.createElement('input');
+                countInputBox.type = 'number';
+                countInputBox.min = '1';
+                countInputBox.max = '1000';
+                countInputBox.value = poi.userData.cameraCount || 0;
+                countInputBox.style.width = '60px';
+                countInputBox.style.backgroundColor = 'rgba(0,0,0,0.3)';
+                countInputBox.style.border = '1px solid #4b5563';
+                countInputBox.style.color = 'white';
+                countInputBox.style.padding = '2px 4px';
+                countInputBox.style.borderRadius = '3px';
+
+                countInputBox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    let val = parseInt(countInputBox.value, 10) || 0;
+                    if (val < 0) val = 0;
+                    poi.userData.cameraCount = val;
+                    
+                    // Update global total dynamically
+                    let newTotal = 0;
+                    this.pois.forEach(p => {
+                        newTotal += p.userData.cameraCount || 0;
+                    });
+                    this.countInput.value = newTotal;
+                    
+                    this.updatePreview();
+                });
+                
+                countInputBox.addEventListener('mousedown', (e) => e.stopPropagation());
+                countInputBox.addEventListener('click', (e) => e.stopPropagation());
+                countInputBox.addEventListener('keydown', (e) => e.stopPropagation());
+
+                countContainer.appendChild(countLabel);
+                countContainer.appendChild(countInputBox);
+                sliderContainer.appendChild(countContainer);
+
+                // --- Preview Frustums Checkbox ---
+                const previewContainer = document.createElement('div');
+                previewContainer.style.display = 'flex';
+                previewContainer.style.justifyContent = 'space-between';
+                previewContainer.style.alignItems = 'center';
+                previewContainer.style.fontSize = '0.75rem';
+                previewContainer.style.color = '#cbd5e1';
+                previewContainer.style.marginTop = '8px';
+                
+                const previewLabel = document.createElement('span');
+                previewLabel.innerText = 'Show Frustums:';
+                
+                const previewCheckbox = document.createElement('input');
+                previewCheckbox.type = 'checkbox';
+                previewCheckbox.checked = poi.userData.showFrustums !== false;
+
+                previewCheckbox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    poi.userData.showFrustums = previewCheckbox.checked;
+                    this.updatePreview();
+                });
+                
+                previewCheckbox.addEventListener('mousedown', (e) => e.stopPropagation());
+                previewCheckbox.addEventListener('click', (e) => e.stopPropagation());
+
+                previewContainer.appendChild(previewLabel);
+                previewContainer.appendChild(previewCheckbox);
+                sliderContainer.appendChild(previewContainer);
+
+                container.appendChild(sliderContainer);
+            }
+
+            this.poiListContainer.appendChild(container);
         });
     }
 
@@ -241,15 +373,45 @@ export class VirtualCameraManager {
         poi.geometry.dispose();
         poi.material.dispose();
         this.pois.splice(index, 1);
+        
+        // Just update total UI, don't redistribute remaining!
+        let newTotal = 0;
+        this.pois.forEach(p => newTotal += p.userData.cameraCount);
+        this.countInput.value = newTotal;
+        
         this.updatePoiList();
         this.updatePreview();
     }
 
     setupInteractions() {
-        window.addEventListener('mousedown', (event) => {
+        let pointerDownPos = { x: 0, y: 0 };
+
+        window.addEventListener('pointerdown', (event) => {
             if (!this.active) return;
+            pointerDownPos.x = event.clientX;
+            pointerDownPos.y = event.clientY;
+        });
+
+        window.addEventListener('pointerup', (event) => {
+            if (!this.active) return;
+            
+            // Check if it was a drag (moved more than 3 pixels)
+            const dx = event.clientX - pointerDownPos.x;
+            const dy = event.clientY - pointerDownPos.y;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                return; // It was a drag (e.g. orbiting), ignore for selection
+            }
+
             if (event.target.closest('#vc-panel') || event.target.closest('#ui-overlay')) return;
             if (this.transformControls.dragging) return;
+
+            // Ignore clicks in the bottom-right 128x128 area (ViewHelper gizmo)
+            const rect = this.renderer.domElement.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+            const clickY = event.clientY - rect.top;
+            if (clickX > rect.width - 128 && clickY > rect.height - 128) {
+                return;
+            }
 
             this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -266,6 +428,7 @@ export class VirtualCameraManager {
                     if (hits[0].object !== currentAttached) {
                         this.transformControls.setMode('translate');
                         this.transformControls.attach(hits[0].object);
+                        this.updatePoiList();
                     }
                     return;
                 }
@@ -287,6 +450,7 @@ export class VirtualCameraManager {
                 
                 // Click empty space deselects current marker
                 this.transformControls.detach();
+                this.updatePoiList();
                 return;
             }
 
@@ -295,81 +459,28 @@ export class VirtualCameraManager {
             if (hits.length > 0) {
                 this.transformControls.setMode('translate');
                 this.transformControls.attach(hits[0].object);
+                this.updatePoiList();
             }
         });
 
-        // Update preview and camera position when dragging a POI
+        // Update preview when dragging a POI
         this.transformControls.addEventListener('change', () => {
-            if (this.active && this.transformControls.dragging && this.dragOffset && !this.isExporting) {
-                const activePoi = this.transformControls.object;
-                if (activePoi) {
-                    this.camera.position.copy(activePoi.position).add(this.dragOffset);
-                    if (this.orbitControls) {
-                        this.orbitControls.target.copy(activePoi.position);
-                        this.orbitControls.update();
-                    }
-                }
-            }
             if (this.active && this.previewToggle.checked && !this.isExporting) {
                 this.updatePreview();
             }
         });
         
-        // Update list coordinates and drag offsets when drag starts/finishes
+        // Update list coordinates and camera target when drag finishes
         this.transformControls.addEventListener('dragging-changed', (event) => {
-            if (event.value) {
-                const activePoi = this.transformControls.object;
-                if (activePoi && this.pois.includes(activePoi)) {
-                    this.dragOffset = this.camera.position.clone().sub(activePoi.position);
-                } else {
-                    this.dragOffset = null;
-                }
-            } else {
-                this.dragOffset = null;
+            if (!event.value) {
                 if (this.active && !this.isExporting) {
                     this.updatePoiList();
+                    const activePoi = this.transformControls.object;
+                    if (activePoi && this.orbitControls) {
+                        this.orbitControls.target.copy(activePoi.position);
+                        this.orbitControls.update();
+                    }
                 }
-            }
-        });
-
-        // Keyboard shortcuts for X, Y, Z axis alignment
-        window.addEventListener('keydown', (event) => {
-            if (!this.active) return;
-            
-            // Ignore key events inside input elements
-            if (document.activeElement && (
-                document.activeElement.tagName === 'INPUT' || 
-                document.activeElement.tagName === 'SELECT' || 
-                document.activeElement.tagName === 'TEXTAREA'
-            )) {
-                return;
-            }
-            
-            const activePoi = this.transformControls.object;
-            if (!activePoi || !this.pois.includes(activePoi)) return;
-            
-            const key = event.key.toUpperCase();
-            if (key === 'X' || key === 'Y' || key === 'Z') {
-                const distance = (activePoi.userData && activePoi.userData.standoff !== null)
-                    ? activePoi.userData.standoff
-                    : (parseFloat(this.standoffInput.value) || 2.5);
-                if (key === 'X') {
-                    this.camera.position.set(activePoi.position.x + distance, activePoi.position.y, activePoi.position.z);
-                } else if (key === 'Y') {
-                    // Offset by 0.0001 to prevent OrbitControls gimbal lock/flipping when looking straight down
-                    this.camera.position.set(activePoi.position.x, activePoi.position.y + distance, activePoi.position.z + 0.0001);
-                } else if (key === 'Z') {
-                    this.camera.position.set(activePoi.position.x, activePoi.position.y, activePoi.position.z + distance);
-                }
-                this.camera.lookAt(activePoi.position);
-                
-                if (this.orbitControls) {
-                    this.orbitControls.target.copy(activePoi.position);
-                    this.orbitControls.update();
-                }
-                
-                // Refresh offset for dragging
-                this.dragOffset = this.camera.position.clone().sub(activePoi.position);
             }
         });
     }
@@ -382,11 +493,18 @@ export class VirtualCameraManager {
         sphere.renderOrder = 999; // Draw on top
         
         sphere.userData = {
-            standoff: null
+            standoff: null,
+            cameraCount: 50,
+            showFrustums: true
         };
         
         this.scene.add(sphere);
         this.pois.push(sphere);
+
+        // Update total UI by appending the new marker's cameras
+        let newTotal = 0;
+        this.pois.forEach(p => newTotal += p.userData.cameraCount);
+        this.countInput.value = newTotal;
 
         this.transformControls.setMode('translate');
         this.transformControls.attach(sphere);
@@ -443,50 +561,27 @@ export class VirtualCameraManager {
     }
 
     buildVirtualCameraList() {
-        const totalCameras = parseInt(this.countInput.value, 10) || 100;
-        const globalCount = Math.round(totalCameras * 0.4);
-        const closeupTotal = totalCameras - globalCount;
-
         const cameras = [];
 
-        // Tier 1: Global Orbit
-        let sceneCentroid = new THREE.Vector3();
+        // POI Closeups Only
         if (this.pois.length > 0) {
-            this.pois.forEach(p => sceneCentroid.add(p.position));
-            sceneCentroid.multiplyScalar(1 / this.pois.length);
-        }
-
-        // Estimate a global radius
-        let maxDist = 2.0;
-        if (this.pois.length > 0) {
-            this.pois.forEach(p => {
-                const d = p.position.distanceTo(sceneCentroid);
-                if (d > maxDist) maxDist = d;
-            });
-        }
-        const globalRadius = Math.max(3.0, maxDist * 2.0);
-
-        const globalPositions = this.generateUpperHemisphereFibonacci(sceneCentroid, globalRadius, globalCount, 10, 45);
-        globalPositions.forEach(pos => {
-            cameras.push({ position: pos, target: sceneCentroid.clone(), tier: 'global' });
-        });
-
-        // Tier 2: POI Closeups
-        if (this.pois.length > 0) {
-            const perPoi = Math.floor(closeupTotal / this.pois.length);
-            const defaultRadius = parseFloat(this.standoffInput ? this.standoffInput.value : 2.5);
+            const defaultRadius = 2.5;
 
             for (let pi = 0; pi < this.pois.length; pi++) {
                 const poi = this.pois[pi];
                 const radius = (poi.userData && poi.userData.standoff !== null)
                     ? poi.userData.standoff
                     : defaultRadius;
-                const count = pi === this.pois.length - 1 ? closeupTotal - perPoi * pi : perPoi;
-                const positions = this.generateSphereBandFibonacci(poi.position, radius, count, 5, 75);
                 
-                positions.forEach(pos => {
-                    cameras.push({ position: pos, target: poi.position.clone(), tier: 'poi' });
-                });
+                const count = poi.userData.cameraCount || 0;
+                
+                if (count > 0) {
+                    const positions = this.generateSphereBandFibonacci(poi.position, radius, count, 5, 75);
+                    
+                    positions.forEach(pos => {
+                        cameras.push({ position: pos, target: poi.position.clone(), tier: 'poi', poi: poi });
+                    });
+                }
             }
         }
 
@@ -505,7 +600,10 @@ export class VirtualCameraManager {
         });
         this.previewLines = [];
 
-        if (!this.active || !this.previewToggle.checked) return;
+        // We no longer abort early if previewToggle is unchecked, because 
+        // individual markers might have showFrustums=true overriding it (though 
+        // they are normally synced when the global toggle is clicked).
+        if (!this.active) return;
 
         const cameras = this.buildVirtualCameraList();
         
@@ -525,6 +623,8 @@ export class VirtualCameraManager {
         const colorPoi = 0x33ccff;    // Cyan for POI
 
         cameras.forEach(cam => {
+            if (cam.poi && cam.poi.userData.showFrustums === false) return;
+
             m.lookAt(cam.position, cam.target, up);
             
             // Three.js cameras look down -Z. We need a quaternion for the frustum lines

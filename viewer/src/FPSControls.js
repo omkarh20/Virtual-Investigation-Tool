@@ -34,10 +34,12 @@ export class FPSControls {
         this._onPointerMove = this._handlePointerMove.bind(this);
         this._onPointerUp = this._handlePointerUp.bind(this);
         this._onContextMenu = (e) => e.preventDefault();
+        this._onBlur = this._handleBlur.bind(this);
 
         // Attach listeners
         window.addEventListener('keydown', this._onKeyDown);
         window.addEventListener('keyup', this._onKeyUp);
+        window.addEventListener('blur', this._onBlur);
         this.domElement.addEventListener('pointerdown', this._onPointerDown);
         this.domElement.addEventListener('pointermove', this._onPointerMove);
         this.domElement.addEventListener('pointerup', this._onPointerUp);
@@ -88,6 +90,11 @@ export class FPSControls {
         }
     }
 
+    _handleBlur() {
+        this._moveState = { forward: 0, back: 0, left: 0, right: 0, up: 0, down: 0 };
+        this._isDragging = false;
+    }
+
     _handlePointerDown(event) {
         if (!this.enabled) return;
 
@@ -127,6 +134,7 @@ export class FPSControls {
     dispose() {
         window.removeEventListener('keydown', this._onKeyDown);
         window.removeEventListener('keyup', this._onKeyUp);
+        window.removeEventListener('blur', this._onBlur);
         this.domElement.removeEventListener('pointerdown', this._onPointerDown);
         this.domElement.removeEventListener('pointermove', this._onPointerMove);
         this.domElement.removeEventListener('pointerup', this._onPointerUp);
