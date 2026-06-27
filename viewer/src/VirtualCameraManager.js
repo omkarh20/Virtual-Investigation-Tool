@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import JSZip from 'jszip';
 
 export class VirtualCameraManager {
-    constructor(scene, camera, renderer, transformControls) {
+    constructor(scene, camera, renderer, transformControls, orbitControls) {
         this.scene = scene;
         this.camera = camera;
         this.renderer = renderer;
         this.transformControls = transformControls;
+        this.orbitControls = orbitControls;
 
         this.active = false;
         this.placeMode = false;
@@ -90,7 +91,7 @@ export class VirtualCameraManager {
     updatePlaceModeUI() {
         if (!this.placeModeBtn) return;
         this.placeModeBtn.style.backgroundColor = this.placeMode ? '#2563eb' : '#4b5563';
-        this.placeModeBtn.innerText = `⊕ Place Marker: ${this.placeMode ? 'ON' : 'OFF'}`;
+        this.placeModeBtn.innerText = this.placeMode ? '⊕ Mode: Place Markers' : '✎ Mode: Adjust Markers';
     }
 
     updatePoiList() {
@@ -123,6 +124,94 @@ export class VirtualCameraManager {
             label.style.fontSize = '0.8rem';
             label.style.color = '#cbd5e1';
 
+            // Create custom standoff distance input field
+            const distInput = document.createElement('input');
+            distInput.type = 'number';
+            distInput.min = '0.1';
+            distInput.max = '10.0';
+            distInput.step = '0.1';
+            distInput.placeholder = 'def';
+            distInput.value = (poi.userData && poi.userData.standoff !== null) ? poi.userData.standoff : '';
+            distInput.style.width = '40px';
+            distInput.style.fontSize = '0.75rem';
+            distInput.style.background = 'rgba(255, 255, 255, 0.1)';
+            distInput.style.color = 'white';
+            distInput.style.border = '1px solid #4b5563';
+            distInput.style.borderRadius = '3px';
+            distInput.style.padding = '1px 3px';
+            distInput.style.marginLeft = '8px';
+            distInput.title = 'Custom standoff distance (leave empty to use global default)';
+
+            distInput.addEventListener('change', () => {
+                const val = parseFloat(distInput.value);
+                if (!isNaN(val) && val > 0) {
+                    if (!poi.userData) poi.userData = {};
+                    poi.userData.standoff = val;
+                } else {
+                    if (!poi.userData) poi.userData = {};
+                    poi.userData.standoff = null;
+                    distInput.value = '';
+                }
+                this.updatePreview();
+            });
+            distInput.addEventListener('click', (e) => e.stopPropagation());
+
+            // Create alignment buttons container
+            const axisContainer = document.createElement('div');
+            axisContainer.style.display = 'flex';
+            axisContainer.style.gap = '4px';
+            axisContainer.style.marginRight = '8px';
+            axisContainer.style.marginLeft = 'auto'; // push it to the right side of the row
+
+            ['X', 'Y', 'Z'].forEach(axis => {
+                const axisBtn = document.createElement('button');
+                axisBtn.innerText = axis;
+                axisBtn.style.backgroundColor = 'rgba(255,255,255,0.1)';
+                axisBtn.style.border = 'none';
+                axisBtn.style.color = 'white';
+                axisBtn.style.borderRadius = '3px';
+                axisBtn.style.padding = '2px 6px';
+                axisBtn.style.fontSize = '0.75rem';
+                axisBtn.style.cursor = 'pointer';
+                axisBtn.title = `Align camera view along ${axis}-axis`;
+
+                axisBtn.addEventListener('mouseenter', () => {
+                    axisBtn.style.backgroundColor = '#3b82f6';
+                });
+                axisBtn.addEventListener('mouseleave', () => {
+                    axisBtn.style.backgroundColor = 'rgba(255,255,255,0.1)';
+                });
+
+                axisBtn.addEventListener('click', (e) => {
+                    e.stopPropagation(); // prevent row click / select object
+                    
+                    // Attach transform controls to this marker
+                    this.transformControls.setMode('translate');
+                    this.transformControls.attach(poi);
+                    
+                    // Align the camera
+                    const distance = (poi.userData && poi.userData.standoff !== null)
+                        ? poi.userData.standoff
+                        : (parseFloat(this.standoffInput.value) || 2.5);
+                    if (axis === 'X') {
+                        this.camera.position.set(poi.position.x + distance, poi.position.y, poi.position.z);
+                    } else if (axis === 'Y') {
+                        // Offset by 0.0001 to prevent OrbitControls gimbal lock/flipping when looking straight down
+                        this.camera.position.set(poi.position.x, poi.position.y + distance, poi.position.z + 0.0001);
+                    } else if (axis === 'Z') {
+                        this.camera.position.set(poi.position.x, poi.position.y, poi.position.z + distance);
+                    }
+                    this.camera.lookAt(poi.position);
+                    
+                    if (this.orbitControls) {
+                        this.orbitControls.target.copy(poi.position);
+                        this.orbitControls.update();
+                    }
+                });
+
+                axisContainer.appendChild(axisBtn);
+            });
+
             const delBtn = document.createElement('button');
             delBtn.innerText = '✕';
             delBtn.style.background = 'none';
@@ -136,6 +225,8 @@ export class VirtualCameraManager {
             });
 
             row.appendChild(label);
+            row.appendChild(distInput);
+            row.appendChild(axisContainer);
             row.appendChild(delBtn);
             this.poiListContainer.appendChild(row);
         });
@@ -165,37 +256,120 @@ export class VirtualCameraManager {
 
             this.raycaster.setFromCamera(this.mouse, this.camera);
 
-            // 1. Check if clicking on an existing POI to select it
-            const hits = this.raycaster.intersectObjects(this.pois, false);
-            if (hits.length > 0) {
-                this.transformControls.setMode('translate');
-                this.transformControls.attach(hits[0].object);
-                return;
-            }
+            const currentAttached = this.transformControls.object;
+            const isCurrentPoi = currentAttached && this.pois.includes(currentAttached);
 
-            // 2. Otherwise, intersect ground plane to place a new POI if placeMode is ON
+            // 1. Place Mode: Allow adding and switching markers freely
             if (this.placeMode) {
+                const hits = this.raycaster.intersectObjects(this.pois, false);
+                if (hits.length > 0) {
+                    if (hits[0].object !== currentAttached) {
+                        this.transformControls.setMode('translate');
+                        this.transformControls.attach(hits[0].object);
+                    }
+                    return;
+                }
+
                 const intersectPoint = new THREE.Vector3();
                 if (this.raycaster.ray.intersectPlane(this.groundPlane, intersectPoint)) {
                     this.createPOI(intersectPoint);
                 }
-            } else {
-                // If not in placeMode, clicking empty space deselects
+                return;
+            }
+
+            // 2. Adjust Mode: Enforce lock to prevent accidental switching
+            if (isCurrentPoi) {
+                const hits = this.raycaster.intersectObjects(this.pois, false);
+                if (hits.length > 0) {
+                    // Selection is locked to current marker
+                    return;
+                }
+                
+                // Click empty space deselects current marker
                 this.transformControls.detach();
+                return;
+            }
+
+            // Select marker if none are active
+            const hits = this.raycaster.intersectObjects(this.pois, false);
+            if (hits.length > 0) {
+                this.transformControls.setMode('translate');
+                this.transformControls.attach(hits[0].object);
             }
         });
 
-        // Update preview when dragging a POI
+        // Update preview and camera position when dragging a POI
         this.transformControls.addEventListener('change', () => {
+            if (this.active && this.transformControls.dragging && this.dragOffset && !this.isExporting) {
+                const activePoi = this.transformControls.object;
+                if (activePoi) {
+                    this.camera.position.copy(activePoi.position).add(this.dragOffset);
+                    if (this.orbitControls) {
+                        this.orbitControls.target.copy(activePoi.position);
+                        this.orbitControls.update();
+                    }
+                }
+            }
             if (this.active && this.previewToggle.checked && !this.isExporting) {
                 this.updatePreview();
             }
         });
         
-        // Update list coordinates when drag finishes
+        // Update list coordinates and drag offsets when drag starts/finishes
         this.transformControls.addEventListener('dragging-changed', (event) => {
-            if (!event.value && this.active && !this.isExporting) {
-                this.updatePoiList();
+            if (event.value) {
+                const activePoi = this.transformControls.object;
+                if (activePoi && this.pois.includes(activePoi)) {
+                    this.dragOffset = this.camera.position.clone().sub(activePoi.position);
+                } else {
+                    this.dragOffset = null;
+                }
+            } else {
+                this.dragOffset = null;
+                if (this.active && !this.isExporting) {
+                    this.updatePoiList();
+                }
+            }
+        });
+
+        // Keyboard shortcuts for X, Y, Z axis alignment
+        window.addEventListener('keydown', (event) => {
+            if (!this.active) return;
+            
+            // Ignore key events inside input elements
+            if (document.activeElement && (
+                document.activeElement.tagName === 'INPUT' || 
+                document.activeElement.tagName === 'SELECT' || 
+                document.activeElement.tagName === 'TEXTAREA'
+            )) {
+                return;
+            }
+            
+            const activePoi = this.transformControls.object;
+            if (!activePoi || !this.pois.includes(activePoi)) return;
+            
+            const key = event.key.toUpperCase();
+            if (key === 'X' || key === 'Y' || key === 'Z') {
+                const distance = (activePoi.userData && activePoi.userData.standoff !== null)
+                    ? activePoi.userData.standoff
+                    : (parseFloat(this.standoffInput.value) || 2.5);
+                if (key === 'X') {
+                    this.camera.position.set(activePoi.position.x + distance, activePoi.position.y, activePoi.position.z);
+                } else if (key === 'Y') {
+                    // Offset by 0.0001 to prevent OrbitControls gimbal lock/flipping when looking straight down
+                    this.camera.position.set(activePoi.position.x, activePoi.position.y + distance, activePoi.position.z + 0.0001);
+                } else if (key === 'Z') {
+                    this.camera.position.set(activePoi.position.x, activePoi.position.y, activePoi.position.z + distance);
+                }
+                this.camera.lookAt(activePoi.position);
+                
+                if (this.orbitControls) {
+                    this.orbitControls.target.copy(activePoi.position);
+                    this.orbitControls.update();
+                }
+                
+                // Refresh offset for dragging
+                this.dragOffset = this.camera.position.clone().sub(activePoi.position);
             }
         });
     }
@@ -206,6 +380,10 @@ export class VirtualCameraManager {
         const sphere = new THREE.Mesh(geometry, material);
         sphere.position.copy(position);
         sphere.renderOrder = 999; // Draw on top
+        
+        sphere.userData = {
+            standoff: null
+        };
         
         this.scene.add(sphere);
         this.pois.push(sphere);
@@ -296,14 +474,18 @@ export class VirtualCameraManager {
         // Tier 2: POI Closeups
         if (this.pois.length > 0) {
             const perPoi = Math.floor(closeupTotal / this.pois.length);
-            const closeupRadius = parseFloat(this.standoffInput ? this.standoffInput.value : 2.5);
+            const defaultRadius = parseFloat(this.standoffInput ? this.standoffInput.value : 2.5);
 
             for (let pi = 0; pi < this.pois.length; pi++) {
+                const poi = this.pois[pi];
+                const radius = (poi.userData && poi.userData.standoff !== null)
+                    ? poi.userData.standoff
+                    : defaultRadius;
                 const count = pi === this.pois.length - 1 ? closeupTotal - perPoi * pi : perPoi;
-                const positions = this.generateSphereBandFibonacci(this.pois[pi].position, closeupRadius, count, 5, 75);
+                const positions = this.generateSphereBandFibonacci(poi.position, radius, count, 5, 75);
                 
                 positions.forEach(pos => {
-                    cameras.push({ position: pos, target: this.pois[pi].position.clone(), tier: 'poi' });
+                    cameras.push({ position: pos, target: poi.position.clone(), tier: 'poi' });
                 });
             }
         }

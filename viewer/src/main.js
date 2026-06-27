@@ -104,7 +104,7 @@ function initRenderer() {
     sceneBuilder.loadFromManifest();
 
     // 8. Virtual Camera Manager
-    const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls);
+    const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls, orbitControls);
 
     // 9. File Upload
     const loadFileBtn = document.getElementById('load-file-btn');
