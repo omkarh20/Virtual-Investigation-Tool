@@ -57,7 +57,7 @@ async def run_colmap_sparse(job_id: str, job_dir: str, config: dict, push_ws: Ca
         "--database_path", database_path,
         "--image_path", image_path,
         "--ImageReader.camera_model", camera_model,
-        "--SiftExtraction.use_gpu", use_gpu
+        "--FeatureExtraction.use_gpu", use_gpu
     ]
     await run_process(cmd_extract, push_ws, step_id, "Extractor")
 
@@ -66,7 +66,7 @@ async def run_colmap_sparse(job_id: str, job_dir: str, config: dict, push_ws: Ca
     cmd_match = [
         "colmap", f"{matcher_type}_matcher",
         "--database_path", database_path,
-        "--SiftMatching.use_gpu", use_gpu
+        "--FeatureMatching.use_gpu", use_gpu
     ]
     await run_process(cmd_match, push_ws, step_id, "Matcher")
 

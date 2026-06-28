@@ -52,7 +52,7 @@
 
         <h1 id="pipeline-job-title" class="pipeline-title">Pipeline</h1>
 
-        <div class="pipeline-mode-toggle" style="margin-bottom: 20px; display: flex; gap: 8px;">
+        <div id="pipeline-mode-toggle" class="pipeline-mode-toggle" style="margin-bottom: 20px; display: flex; gap: 8px;">
           <button class="mode-tab active-mode" id="mode-full-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer;">Full Pipeline</button>
           <button class="mode-tab" id="mode-advanced-btn" style="padding: 6px 12px; border-radius: 6px; cursor: pointer; background: transparent; border: 1px solid #4b5563; color: #9ca3af;">Advanced Mode</button>
         </div>
@@ -63,14 +63,6 @@
           
           <div class="config-section" id="advanced-config-section" style="display:none;">
             <h3>Advanced Mode Settings</h3>
-            <div class="config-field">
-              <label for="cfg-start-phase">Starting Phase</label>
-              <select id="cfg-start-phase">
-                <option value="1" selected>1. Prepare Images</option>
-                <option value="2">2. COLMAP Sparse</option>
-                <option value="4">4. 3DGS Training</option>
-              </select>
-            </div>
           </div>
 
           <div class="config-section" id="upload-section">
@@ -192,7 +184,7 @@
           </div>
 
           <div id="step-row-2" class="step-row">
-            <span class="step-label">COLMAP Sparse</span>
+            <span class="step-label">COLMAP</span>
             <div class="step-bar"><div class="step-bar-fill"></div></div>
             <span class="step-status">Pending</span>
           </div>
@@ -217,12 +209,17 @@
 
         </div>
 
-        <!-- Phase control (Pause/Continue) -->
+        <!-- Cancel button (visible while running) -->
+        <div id="pipeline-cancel-area" style="display:none; margin-top: 12px; text-align: right;">
+          <button class="btn" id="pipeline-cancel-btn" style="background: rgba(239,68,68,0.15); border: 1px solid #ef4444; color: #ef4444; padding: 6px 16px; border-radius: 6px; cursor: pointer;">⏹ Cancel Phase</button>
+        </div>
+
         <div id="phase-control" class="phase-control" style="display:none;">
           <div class="phase-summary" id="phase-summary"></div>
+          <!-- Config options for the next phase, populated by JS -->
+          <div id="phase-config-preview"></div>
           <div class="phase-actions">
             <button class="btn btn-primary" id="phase-continue-btn">Continue to <span id="next-phase-label">Next Phase</span> →</button>
-            <button class="btn btn-secondary" id="phase-run-remaining-btn">Run All Remaining ▶▶</button>
           </div>
         </div>
 

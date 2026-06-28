@@ -5,6 +5,7 @@ import uuid
 import glob
 import zipfile
 import json
+import re
 from typing import Any
 
 from runners.preprocessor import process_inputs
@@ -13,12 +14,19 @@ from runners.colmap_dense import run_colmap_dense
 from runners.train_3dgs import run_3dgs_training
 from vr_exporter import process_vr_export
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="VIT Backend", version="0.1.0-modular")
+
+active_tasks = set()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    for task in active_tasks:
+        task.cancel()
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +40,7 @@ app.add_middleware(
 
 jobs: dict[str, dict[str, Any]] = {}
 progress_queues: dict[str, asyncio.Queue] = {}
+job_tasks: dict[str, asyncio.Task] = {}  # active task per job_id
 JOBS_DIR = os.environ.get("JOBS_DIR", "./jobs")
 os.makedirs(JOBS_DIR, exist_ok=True)
 
@@ -71,10 +80,17 @@ async def push(job_id: str, msg: dict) -> None:
     q = progress_queues.get(job_id)
     if q:
         await q.put(msg)
+    if msg is not None:
+        log_path = os.path.join(JOBS_DIR, job_id, "logs.jsonl")
+        try:
+            with open(log_path, "a") as f:
+                f.write(json.dumps(msg) + "\n")
+        except Exception as e:
+            pass
 
 PHASES = [
     {"id": 1, "label": "Preparing Images",   "runner": process_inputs},
-    {"id": 2, "label": "COLMAP Sparse",       "runner": run_colmap_sparse},
+    {"id": 2, "label": "COLMAP",       "runner": run_colmap_sparse},
     {"id": 3, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
     {"id": 4, "label": "3DGS Training",       "runner": run_3dgs_training},
     {"id": 5, "label": "Segmentation",        "runner": "dummy", "simulated": True},
@@ -148,35 +164,69 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                 "summary": str(result)
             })
             
-            # Check if we should stop here
+            # Check if we should pause here
             is_end = end_phase is not None and pid == end_phase
+            should_pause = is_end or (job["run_mode"] == "step" and pid < len(PHASES))
             
-            if is_end or (job["run_mode"] == "step" and pid < len(PHASES)):
+            if should_pause:
                 next_pid = pid + 1
                 if next_pid == 3 and not enable_dense:
                     next_pid = 4
-                    
-                if is_end:
-                    job["status"] = "paused"
-                    save_job_metadata(job_id)
-                    await push(job_id, {"type": "phase_paused", "next_phase": None, "next_label": None})
-                    return
-                elif next_pid <= len(PHASES):
-                    next_label = PHASES[next_pid - 1]["label"]
-                    job["status"] = "paused"
-                    save_job_metadata(job_id)
-                    await push(job_id, {
-                        "type": "phase_paused",
-                        "next_phase": next_pid,
-                        "next_label": next_label
-                    })
-                    return 
                 
+                # Compute next label even for is_end so user can always continue
+                if next_pid <= len(PHASES):
+                    next_label = PHASES[next_pid - 1]["label"]
+                    next_phase_out = next_pid
+                else:
+                    next_label = None
+                    next_phase_out = None
+
+                job["status"] = "paused"
+                save_job_metadata(job_id)
+                await push(job_id, {
+                    "type": "phase_paused",
+                    "next_phase": next_phase_out,
+                    "next_label": next_label
+                })
+                return
+                
+        except asyncio.CancelledError:
+            # Clean up partial output for the cancelled phase
+            cleanup_dirs = {
+                1: [os.path.join(JOBS_DIR, job_id, "images")],
+                2: [os.path.join(JOBS_DIR, job_id, "colmap")],
+                3: [os.path.join(JOBS_DIR, job_id, "dense")],
+                4: [os.path.join(JOBS_DIR, job_id, "output")],
+            }
+            for d in cleanup_dirs.get(pid, []):
+                if os.path.exists(d):
+                    shutil.rmtree(d, ignore_errors=True)
+            job["status"] = "cancelled"
+            job["current_phase"] = pid  # remember where we stopped
+            save_job_metadata(job_id)
+            await push(job_id, {"type": "cancelled", "phase": pid, "label": phase["label"]})
+            await push(job_id, None)
+            job_tasks.pop(job_id, None)
+            return
         except Exception as e:
+            # Clean up partial output for the failed phase
+            cleanup_dirs = {
+                1: [os.path.join(JOBS_DIR, job_id, "images")],
+                2: [os.path.join(JOBS_DIR, job_id, "colmap")],
+                3: [os.path.join(JOBS_DIR, job_id, "dense")],
+                4: [os.path.join(JOBS_DIR, job_id, "output")],
+            }
+            for d in cleanup_dirs.get(pid, []):
+                if os.path.exists(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                    
             await push(job_id, {"type": "log", "step": pid, "progress": 100, "text": f"Error: {e}"})
             job["status"] = "failed"
+            job["current_phase"] = pid
             save_job_metadata(job_id)
+            await push(job_id, {"type": "failed", "phase": pid, "label": phase["label"], "error": str(e)})
             await push(job_id, None)
+            job_tasks.pop(job_id, None)
             return
 
     job["status"] = "done"
@@ -191,8 +241,14 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
 
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...)) -> JSONResponse:
-    job_id = str(uuid.uuid4())
+async def upload(file: UploadFile = File(...), project_name: str = Form(None)) -> JSONResponse:
+    base_uuid = str(uuid.uuid4())[:8]
+    if project_name:
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', project_name).strip('_')
+        job_id = f"{safe_name}_{base_uuid}"
+    else:
+        job_id = base_uuid
+
     input_dir = make_job_dir(job_id)
     dest = os.path.join(input_dir, file.filename)
 
@@ -248,8 +304,23 @@ async def run_pipeline(body: dict) -> JSONResponse:
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
 
-    asyncio.create_task(run_pipeline_orchestrator(job_id, end_phase))
+    task = asyncio.create_task(run_pipeline_orchestrator(job_id, end_phase))
+    active_tasks.add(task)
+    task.add_done_callback(active_tasks.discard)
+    job_tasks[job_id] = task
+    task.add_done_callback(lambda t: job_tasks.pop(job_id, None))
     return JSONResponse({"status": "started", "job_id": job_id})
+
+@app.post("/cancel-pipeline")
+async def cancel_pipeline(body: dict) -> JSONResponse:
+    job_id = body.get("job_id")
+    if not job_id or job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+    task = job_tasks.get(job_id)
+    if task and not task.done():
+        task.cancel()
+        return JSONResponse({"status": "cancelling", "job_id": job_id})
+    return JSONResponse({"error": "No running task for this job"}, status_code=409)
 
 @app.post("/continue-pipeline")
 async def continue_pipeline(body: dict) -> JSONResponse:
@@ -257,17 +328,24 @@ async def continue_pipeline(body: dict) -> JSONResponse:
     if not job_id or job_id not in jobs:
         return JSONResponse({"error": "Unknown job_id"}, status_code=404)
 
-    if jobs[job_id]["status"] != "paused":
-        return JSONResponse({"error": "Pipeline is not paused"}, status_code=409)
+    if jobs[job_id]["status"] not in ("paused", "cancelled", "failed"):
+        return JSONResponse({"error": f"Pipeline is not paused/cancelled (status: {jobs[job_id]['status']})"}, status_code=409)
 
     mode = body.get("mode", "step")
+    config_update = body.get("config", {})
     jobs[job_id]["run_mode"] = mode
+    if config_update:
+        jobs[job_id]["config"].update(config_update)
     save_job_metadata(job_id)
 
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
 
-    asyncio.create_task(run_pipeline_orchestrator(job_id))
+    task = asyncio.create_task(run_pipeline_orchestrator(job_id))
+    active_tasks.add(task)
+    task.add_done_callback(active_tasks.discard)
+    job_tasks[job_id] = task
+    task.add_done_callback(lambda t: job_tasks.pop(job_id, None))
     return JSONResponse({"status": "resumed", "job_id": job_id})
 
 
@@ -289,8 +367,12 @@ async def download_phase(job_id: str, phase_id: int):
         
     elif phase_id in [2, 3]:
         zip_path = os.path.join(job_dir, f"phase{phase_id}_colmap.zip")
+        dirs_to_zip = ["images", "colmap"]
+        if phase_id == 3:
+            dirs_to_zip.append("dense")
+            
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for d in ["images", "sparse"]:
+            for d in dirs_to_zip:
                 d_path = os.path.join(job_dir, d)
                 if os.path.exists(d_path):
                     for root, _, files in os.walk(d_path):
@@ -346,6 +428,20 @@ async def get_job_status(job_id: str) -> JSONResponse:
         "completed_phases": job["completed_phases"]
     })
 
+@app.get("/jobs/{job_id}/logs")
+async def get_job_logs(job_id: str) -> JSONResponse:
+    log_path = os.path.join(JOBS_DIR, job_id, "logs.jsonl")
+    logs = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        logs.append(json.loads(line))
+        except Exception:
+            pass
+    return JSONResponse(logs)
+
 @app.get("/result/{job_id}")
 async def get_result(job_id: str) -> JSONResponse:
     job = jobs.get(job_id)
@@ -370,6 +466,16 @@ async def list_jobs() -> JSONResponse:
         {"job_id": jid, "status": j["status"], "filename": j.get("filename", "")}
         for jid, j in jobs.items()
     ])
+
+@app.delete("/jobs/{job_id}")
+async def delete_job(job_id: str) -> JSONResponse:
+    if job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+    del jobs[job_id]
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    if os.path.exists(job_dir):
+        shutil.rmtree(job_dir)
+    return JSONResponse({"status": "deleted", "job_id": job_id})
 
 @app.post("/export-vr")
 async def export_vr(body: dict) -> JSONResponse:

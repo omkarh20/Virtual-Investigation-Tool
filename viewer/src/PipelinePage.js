@@ -17,7 +17,7 @@ const BACKEND_WS  = 'ws://localhost:8000';
 
 const STEPS = [
     { id: 1, label: 'Preparing Images' },
-    { id: 2, label: 'COLMAP Sparse' },
+    { id: 2, label: 'COLMAP' },
     { id: 3, label: 'COLMAP Dense', optional: true },
     { id: 4, label: '3DGS Training' },
     { id: 5, label: 'Segmentation' },
@@ -43,6 +43,7 @@ export function initPipelinePage() {
     const nextPhaseLabel  = document.getElementById('next-phase-label');
     
     // Modes & Advanced
+    const modeToggle      = document.getElementById('pipeline-mode-toggle');
     const modeFullBtn     = document.getElementById('mode-full-btn');
     const modeAdvBtn      = document.getElementById('mode-advanced-btn');
     const advancedConfig  = document.getElementById('advanced-config-section');
@@ -58,7 +59,9 @@ export function initPipelinePage() {
     const runAllBtn       = document.getElementById('pipeline-run-all-btn');
     const runSingleBtn    = document.getElementById('pipeline-run-single-btn');
     const continueBtn     = document.getElementById('phase-continue-btn');
-    const runRemainingBtn = document.getElementById('phase-run-remaining-btn');
+    const cancelBtn       = document.getElementById('pipeline-cancel-btn');
+    const cancelArea      = document.getElementById('pipeline-cancel-area');
+    const phaseConfigPreview = document.getElementById('phase-config-preview');
 
     // Config sections
     const cfgPrep         = document.getElementById('cfg-section-prep');
@@ -115,7 +118,7 @@ export function initPipelinePage() {
             modeAdvBtn.style.color = '#9ca3af';
 
             advancedConfig.style.display = 'none';
-            cfgStartPhase.value = "1";
+            if (cfgStartPhase) cfgStartPhase.value = "1";
             runBtn.style.display = 'inline-block';
             runAllBtn.style.display = 'inline-block';
             runSingleBtn.style.display = 'none';
@@ -231,8 +234,17 @@ export function initPipelinePage() {
         }
 
         if (jobId === 'new') {
+            if (modeToggle) modeToggle.style.display = 'flex';
             if (uploadSection) uploadSection.style.display = 'block';
             if (uploadStatus) uploadStatus.textContent = '';
+            
+            // Clear logs and tree from previous runs
+            if (logEl) logEl.innerHTML = '';
+            currentLogDetails = null;
+            currentLogContent = null;
+            if (treeContainer) treeContainer.innerHTML = '';
+            resetSteps();
+            
             selectedFile = null;
             if (inputVideo) inputVideo.value = '';
             if (inputZip) inputZip.value = '';
@@ -241,6 +253,9 @@ export function initPipelinePage() {
             showConfig();
             return;
         }
+        
+        // Existing job — hide the mode toggle, it's irrelevant
+        if (modeToggle) modeToggle.style.display = 'none';
         
         if (uploadSection) uploadSection.style.display = 'none'; 
         try {
@@ -258,11 +273,8 @@ export function initPipelinePage() {
                 showProgress();
                 resetSteps();
                 completedPhases.forEach(pid => markStep(pid, 'done', 100));
-                
-                startWatching(jobId);
-                if (job.status === "paused") {
-                    phaseControl.style.display = 'flex';
-                } else if (job.status === "done") {
+                startWatching(jobId, job.status);
+                if (job.status === "done") {
                     markAllDone();
                     if (viewBtn) viewBtn.disabled = false;
                 }
@@ -278,6 +290,7 @@ export function initPipelinePage() {
         if (configPanel) configPanel.style.display = 'block';
         if (stepsContainer) stepsContainer.style.display = 'none';
         if (phaseControl) phaseControl.style.display = 'none';
+        if (cancelArea) cancelArea.style.display = 'none';
         if (viewBtn) viewBtn.disabled = true;
     }
 
@@ -285,6 +298,7 @@ export function initPipelinePage() {
         if (configPanel) configPanel.style.display = 'none';
         if (stepsContainer) stepsContainer.style.display = 'block';
         if (phaseControl) phaseControl.style.display = 'none';
+        if (cancelArea) cancelArea.style.display = 'none';  // only shown on step_start
         if (viewBtn) viewBtn.disabled = true;
     }
 
@@ -314,13 +328,13 @@ export function initPipelinePage() {
             const zip = new JSZip();
             const files = Array.from(selectedFile);
             for (const f of files) {
-                // If the user selects a folder, file.webkitRelativePath contains the path
                 const path = f.webkitRelativePath || f.name;
-                // remove top level folder name if we want, but better to keep it and let backend flatten, 
-                // actually JSZip doesn't auto flatten. The user wants native folder select.
                 zip.file(path, f);
             }
-            const zipBlob = await zip.generateAsync({ type: 'blob' });
+            if (uploadStatus) uploadStatus.textContent = 'Compressing images (0%)...';
+            const zipBlob = await zip.generateAsync({ type: 'blob' }, (meta) => {
+                if (uploadStatus) uploadStatus.textContent = `Compressing images (${Math.round(meta.percent)}%)...`;
+            });
             filename = (projectName?.value.trim() || 'project') + '_images.zip';
             fileToUpload = new File([zipBlob], filename, { type: 'application/zip' });
         } else {
@@ -330,6 +344,9 @@ export function initPipelinePage() {
 
         const formData = new FormData();
         formData.append('file', fileToUpload, filename);
+        if (projectName && projectName.value) {
+            formData.append('project_name', projectName.value);
+        }
         const uploadRes = await fetch(`${BACKEND_URL}/upload`, { method: 'POST', body: formData });
         if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
         const { job_id } = await uploadRes.json();
@@ -381,15 +398,22 @@ export function initPipelinePage() {
     async function submitContinue(mode) {
         if (!currentJobId) return;
         if (phaseControl) phaseControl.style.display = 'none';
+        if (cancelArea) cancelArea.style.display = 'block';
+        const config = getPreviewConfigData();
+        
+        // Reconnect websocket so we can hear updates from the newly started task
+        startWatching(currentJobId);
+
         try {
             const res = await fetch(`${BACKEND_URL}/continue-pipeline`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ job_id: currentJobId, mode }),
+                body: JSON.stringify({ job_id: currentJobId, mode, config }),
             });
             if (!res.ok) throw new Error("Failed to continue pipeline");
         } catch (e) {
             alert(e.message);
+            if (cancelArea) cancelArea.style.display = 'none';
         }
     }
 
@@ -397,25 +421,56 @@ export function initPipelinePage() {
     if (runAllBtn) runAllBtn.addEventListener('click', () => submitRun('all'));
     if (runSingleBtn) runSingleBtn.addEventListener('click', () => submitRun('step', true));
     if (continueBtn) continueBtn.addEventListener('click', () => submitContinue('step'));
-    if (runRemainingBtn) runRemainingBtn.addEventListener('click', () => submitContinue('all'));
+    if (cancelBtn) cancelBtn.addEventListener('click', async () => {
+        if (!currentJobId) return;
+        if (!confirm('Cancel the current phase? Partial output will be deleted.')) return;
+        try {
+            const res = await fetch(`${BACKEND_URL}/cancel-pipeline`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ job_id: currentJobId }),
+            });
+            if (res.status === 409) {
+                // Phase already finished between button click and request
+                if (cancelArea) cancelArea.style.display = 'none';
+                return;
+            }
+        } catch (e) {
+            console.error('Cancel failed', e);
+        }
+    });
 
     // ── WebSocket connection ───────────────────────────────────────────────────
-    function startWatching(jobId) {
+    // knownFinalStatus: if we already know the job is 'paused'/'done'/'cancelled',
+    // pass it in so historical log replays don't accidentally hide phaseControl.
+    async function startWatching(jobId, knownFinalStatus = null) {
         disconnectWS();
         
         currentLogDetails = null;
         currentLogContent = null;
         if (logEl) logEl.innerHTML = '';
         
+        const isAlreadyFinished = ['paused', 'done', 'cancelled', 'failed'].includes(knownFinalStatus);
+        
+        try {
+            const res = await fetch(`${BACKEND_URL}/jobs/${jobId}/logs`);
+            if (res.ok) {
+                const logs = await res.json();
+                logs.forEach(msg => handleMessage(msg, /* isReplay= */ true, isAlreadyFinished));
+            }
+        } catch (e) {
+            console.error("Could not fetch old logs", e);
+        }
+        
         ws = new WebSocket(`${BACKEND_WS}/progress/${jobId}`);
 
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
-            handleMessage(msg);
+            handleMessage(msg, false, false);
         };
 
         ws.onerror = () => appendLog('[WebSocket error — is the backend running?]');
-        ws.onclose = () => appendLog('[Connection closed]');
+        ws.onclose = () => {};
     }
 
     function disconnectWS() {
@@ -423,11 +478,18 @@ export function initPipelinePage() {
     }
 
     // ── Message handling ───────────────────────────────────────────────────────
-    function handleMessage(msg) {
+    // isReplay: true when replaying historical logs (not live)
+    // isAlreadyFinished: true when we know the pipeline is no longer running
+    function handleMessage(msg, isReplay = false, isAlreadyFinished = false) {
         if (msg.type === 'step_start') {
             markStep(msg.step, 'active', 0);
             appendLog(`Starting: ${msg.label}...`, true, false, msg.label);
-            if (phaseControl) phaseControl.style.display = 'none';
+            // Only hide phaseControl/show cancel if pipeline is actually running right now.
+            // During historical replay of a completed job, don't flip these controls.
+            if (!isAlreadyFinished) {
+                if (phaseControl) phaseControl.style.display = 'none';
+                if (cancelArea) cancelArea.style.display = 'block';
+            }
         } else if (msg.type === 'log') {
             updateStepProgress(msg.step, msg.progress);
             appendLog(msg.text);
@@ -441,23 +503,116 @@ export function initPipelinePage() {
             renderResultsPanel();
             fetchAndRenderTree();
         } else if (msg.type === 'phase_paused') {
+            if (cancelArea) cancelArea.style.display = 'none';
             if (msg.next_phase === null) {
-                // Stopped after a single phase via Advanced Mode end_phase
-                appendLog('✓ Single phase execution complete.');
-                if (phaseControl) phaseControl.style.display = 'none';
-                
-                // Show a nice "continue manually" option if they want to jump back to full pipeline
-                if (nextPhaseLabel) nextPhaseLabel.textContent = 'Configuration';
+                // Truly no next phase — pipeline will reach done on continue
+                if (nextPhaseLabel) nextPhaseLabel.textContent = 'Finish';
+                if (phaseConfigPreview) phaseConfigPreview.innerHTML = '';
+                if (phaseControl) phaseControl.style.display = 'flex';
             } else {
                 if (nextPhaseLabel) nextPhaseLabel.textContent = msg.next_label || 'Next Phase';
+                populatePhaseConfigPreview(msg.next_phase);
                 if (phaseControl) phaseControl.style.display = 'flex';
             }
+        } else if (msg.type === 'cancelled') {
+            markStep(msg.phase, 'error', 0);
+            appendLog(`⚠ ${msg.label} cancelled. Partial output cleaned up.`, false, true);
+            if (cancelArea) cancelArea.style.display = 'none';
+            // Show retry option
+            if (nextPhaseLabel) nextPhaseLabel.textContent = `Retry: ${msg.label}`;
+            populatePhaseConfigPreview(msg.phase);
+            if (phaseSummary) phaseSummary.innerHTML = `<strong style="color:#f87171">Phase cancelled.</strong> Adjust settings below and retry.`;
+            if (phaseControl) phaseControl.style.display = 'flex';
+            fetchAndRenderTree();
+        } else if (msg.type === 'failed') {
+            markStep(msg.phase, 'error', 0);
+            appendLog(`❌ ${msg.label} failed. Partial output cleaned up.`, false, true);
+            if (cancelArea) cancelArea.style.display = 'none';
+            // Show retry option
+            if (nextPhaseLabel) nextPhaseLabel.textContent = `Retry: ${msg.label}`;
+            populatePhaseConfigPreview(msg.phase);
+            if (phaseSummary) phaseSummary.innerHTML = `<strong style="color:#f87171">Phase failed: ${msg.error || 'Unknown error'}</strong> Adjust settings below and retry.`;
+            if (phaseControl) phaseControl.style.display = 'flex';
+            fetchAndRenderTree();
         } else if (msg.type === 'done') {
             markAllDone();
             appendLog('✓ Pipeline complete.');
             if (viewBtn) viewBtn.disabled = false;
+            if (cancelArea) cancelArea.style.display = 'none';
             if (phaseControl) phaseControl.style.display = 'none';
         }
+    }
+
+    // ── Phase Config Preview ───────────────────────────────────────────────────
+    // Map of which config section IDs to show for each phase
+    const PHASE_CONFIG_SECTIONS = {
+        1: ['cfg-section-prep'],
+        2: ['cfg-section-colmap'],
+        3: ['cfg-section-colmap'],
+        4: ['cfg-section-3dgs'],
+    };
+
+    function populatePhaseConfigPreview(nextPhase) {
+        if (!phaseConfigPreview) return;
+        phaseConfigPreview.innerHTML = '';
+        const sectionIds = PHASE_CONFIG_SECTIONS[nextPhase] || [];
+        if (sectionIds.length === 0) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 16px;';
+        const title = document.createElement('p');
+        title.style.cssText = 'color: #9ca3af; font-size: 0.8rem; margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.05em;';
+        title.textContent = 'Settings for next phase (edit before continuing)';
+        wrapper.appendChild(title);
+
+        sectionIds.forEach(id => {
+            const section = document.getElementById(id);
+            if (!section) return;
+            const clone = section.cloneNode(true);
+            // Remove the h3 section heading to keep it compact
+            const h3 = clone.querySelector('h3');
+            if (h3) h3.remove();
+            // Suffix all IDs to avoid conflicts with the original config panel
+            clone.querySelectorAll('[id]').forEach(el => {
+                const oldId = el.id;
+                el.id = `preview-${oldId}`;
+            });
+            clone.querySelectorAll('[for]').forEach(el => {
+                el.setAttribute('for', `preview-${el.getAttribute('for')}`);
+            });
+            clone.style.background = 'none';
+            clone.style.padding = '0';
+            clone.style.display = 'block'; // Ensure it's visible even if the original was hidden
+            wrapper.appendChild(clone);
+        });
+        phaseConfigPreview.appendChild(wrapper);
+    }
+
+    function getPreviewConfigData() {
+        const val = (id) => {
+            const el = document.getElementById(`preview-${id}`);
+            if (!el) return null;
+            if (el.type === 'checkbox') return el.checked;
+            return el.value || null;
+        };
+        const cfg = {};
+        const frameRate = val('cfg-frame-rate');
+        if (frameRate !== null) cfg.frame_rate = frameRate;
+        const matcher = val('cfg-matcher');
+        if (matcher !== null) cfg.colmap_matcher = matcher;
+        const camera = val('cfg-camera-model');
+        if (camera !== null) cfg.colmap_camera_model = camera;
+        const quality = val('cfg-quality');
+        if (quality !== null) cfg.colmap_quality = quality;
+        const gpu = val('cfg-gpu');
+        if (gpu !== null) cfg.colmap_use_gpu = gpu;
+        const dense = val('cfg-dense');
+        if (dense !== null) cfg.colmap_dense_enable = dense;
+        const iter = val('cfg-gs-iterations');
+        if (iter !== null) cfg.gs_iterations = parseInt(iter, 10);
+        const res = val('cfg-gs-resolution');
+        if (res !== null) cfg.gs_max_resolution = parseInt(res, 10);
+        return cfg;
     }
 
     function renderResultsPanel() {
@@ -545,11 +700,19 @@ export function initPipelinePage() {
         if (!logEl) return;
         
         if (isPhaseStart) {
+            // Remove any existing log blocks for this phase if it's being retried to prevent double logs
+            const matchText = phaseLabel || text;
+            Array.from(logEl.querySelectorAll('details summary')).forEach(s => {
+                if (s.textContent === matchText && s.parentElement) {
+                    s.parentElement.remove();
+                }
+            });
+
             currentLogDetails = document.createElement('details');
             currentLogDetails.open = true;
             
             const summary = document.createElement('summary');
-            summary.textContent = phaseLabel || text;
+            summary.textContent = matchText;
             currentLogDetails.appendChild(summary);
             
             currentLogContent = document.createElement('div');

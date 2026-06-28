@@ -288,11 +288,12 @@ option {
   padding: 16px;
   margin-bottom: 28px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
 }
 .phase-summary { font-size: 0.9rem; color: #e0e7ff; }
-.phase-actions { display: flex; gap: 12px; }
+.phase-actions { display: flex; gap: 12px; justify-content: flex-end; }
 
 .step-optional .step-label { color: #6b7280; font-style: italic; }
 

@@ -91,22 +91,25 @@ COLMAP is required for Phase 2 and Phase 3 of the pipeline. The backend invokes 
 
 ### Installation Steps
 
-**Option 1: Conda (Recommended)**
-If you are using a conda environment (like `cloudspace` on Lightning Studio), installing via conda-forge is the cleanest way to get a pre-compiled version with CUDA support:
+The pipeline requires **CUDA support** to run on the GPU. You must use the Conda installation method to get the CUDA-enabled version. Do **not** use `apt-get` unless you intend to run exclusively on the CPU.
+
+**Option 1: Lightning Studio / Conda (Required for GPU/CUDA)**
+Lightning.ai environments (`cloudspace`) have Conda pre-installed. Run the following to install the CUDA-enabled version of COLMAP:
 ```bash
 conda install -c conda-forge colmap
 ```
+*(Note: If you previously installed COLMAP via apt-get, you should remove it first to avoid conflicts: `sudo apt-get remove colmap`)*
 
-**Option 2: APT (Ubuntu / Debian)**
-Alternatively, you can install it via the system package manager:
+**Option 2: APT (CPU Only - Not Recommended)**
+If you only have a CPU, you can install the non-CUDA version via the system package manager. (You must set `colmap_use_gpu: false` in the pipeline config if you do this, otherwise COLMAP will crash):
 ```bash
 sudo apt-get update
 sudo apt-get install -y colmap
 ```
 
 ### Verification
-To verify the installation was successful, run:
+To verify the installation and check for CUDA support, run:
 ```bash
 colmap help
 ```
-If this prints the COLMAP help menu, you are ready to run Phase 2.
+Check the first line of the output. If you installed it correctly via Conda, it should say `... with CUDA`. If it says `without CUDA`, you will need to disable GPU mode in the pipeline settings.
