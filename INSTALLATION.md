@@ -145,3 +145,17 @@ python download_yolo.py
 rm download_yolo.py
 ```
 *(Make sure to run these commands from inside the `dev/checkpoints` folder so the `.pt` files are saved exactly there).*
+
+4. Install GroundingDINO and Downgrade Transformers:
+GroundingDINO should be installed using the community `groundingdino-py` package to avoid PyTorch C++ compilation errors. Furthermore, the `transformers` library must be downgraded to version 4.39.3, as newer versions (>=4.40) remove a function (`get_head_mask` from `BertModel`) that GroundingDINO depends on.
+```bash
+pip install groundingdino-py
+pip install transformers==4.39.3
+```
+
+5. Download GroundingDINO Checkpoint & Config:
+Still in the `dev/checkpoints` directory, download the SwinT config and model weights:
+```bash
+wget -O GroundingDINO_SwinT_OGC.py https://raw.githubusercontent.com/IDEA-Research/GroundingDINO/main/groundingdino/config/GroundingDINO_SwinT_OGC.py 
+wget -nc -O groundingdino_swint_ogc.pth https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
+```
