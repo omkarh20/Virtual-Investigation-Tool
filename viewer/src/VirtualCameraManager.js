@@ -19,6 +19,9 @@ export class VirtualCameraManager {
         // An invisible plane at Y=0 for placing initial POIs
         this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
+        this.pendingSegmentRay = null;
+        this.pendingRayLine = null;
+
         this.setupUI();
         this.setupInteractions();
     }
@@ -70,6 +73,7 @@ export class VirtualCameraManager {
             });
             this.pois = [];
             this.transformControls.detach();
+            this.cancelPendingSegmentation();
             this.updatePoiList();
             this.updatePreview();
         });
@@ -220,6 +224,45 @@ export class VirtualCameraManager {
 
         this.updatePoiList();
         this.updatePreview();
+    }
+
+    cancelPendingSegmentation() {
+        this.pendingSegmentRay = null;
+        if (this.pendingRayLine) {
+            this.scene.remove(this.pendingRayLine);
+            this.pendingRayLine.geometry.dispose();
+            this.pendingRayLine.material.dispose();
+            this.pendingRayLine = null;
+        }
+    }
+
+    calculateRayIntersection(ray1, ray2) {
+        const p1 = ray1.origin, d1 = ray1.direction;
+        const p2 = ray2.origin, d2 = ray2.direction;
+        
+        const w0 = new THREE.Vector3().subVectors(p1, p2);
+        
+        const a = d1.dot(d1);
+        const b = d1.dot(d2);
+        const c = d2.dot(d2);
+        const d = d1.dot(w0);
+        const e = d2.dot(w0);
+        
+        const D = a * c - b * b;
+        let sc, tc;
+        
+        if (D < 1e-6) {
+            sc = 0;
+            tc = d / b; 
+        } else {
+            sc = (b * e - c * d) / D;
+            tc = (a * e - b * d) / D;
+        }
+        
+        const pA = new THREE.Vector3().copy(d1).multiplyScalar(sc).add(p1);
+        const pB = new THREE.Vector3().copy(d2).multiplyScalar(tc).add(p2);
+        
+        return new THREE.Vector3().addVectors(pA, pB).multiplyScalar(0.5);
     }
 
     // ---------------------------------------------------------------------------
@@ -683,21 +726,31 @@ export class VirtualCameraManager {
             
             this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), exportCam);
             
-            // Assume the object is on the ground plane, or use a default distance if looking straight
-            const intersectPoint = new THREE.Vector3();
-            let distanceToObj = 2.5; // default fallback
-            
-            if (this.raycaster.ray.intersectPlane(this.groundPlane, intersectPoint)) {
-                // Check if the intersect point is behind the camera (which means looking away from ground)
-                const dirToIntersect = intersectPoint.clone().sub(exportCam.position).normalize();
-                if (dirToIntersect.dot(this.raycaster.ray.direction) > 0) {
-                     distanceToObj = exportCam.position.distanceTo(intersectPoint);
-                } else {
-                     intersectPoint.copy(exportCam.position).add(this.raycaster.ray.direction.clone().multiplyScalar(distanceToObj));
-                }
-            } else {
-                intersectPoint.copy(exportCam.position).add(this.raycaster.ray.direction.clone().multiplyScalar(distanceToObj));
+            if (!this.pendingSegmentRay) {
+                // First click: store the ray and draw a preview line
+                this.pendingSegmentRay = this.raycaster.ray.clone();
+                
+                const points = [
+                    this.pendingSegmentRay.origin,
+                    this.pendingSegmentRay.origin.clone().add(this.pendingSegmentRay.direction.clone().multiplyScalar(20))
+                ];
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineDashedMaterial({ color: 0x00ff00, dashSize: 0.5, gapSize: 0.2 });
+                this.pendingRayLine = new THREE.Line(geometry, material);
+                this.pendingRayLine.computeLineDistances();
+                this.scene.add(this.pendingRayLine);
+                
+                this.statusText.innerText = `Captured angle 1 for ${bestObj.class}. Move camera and click Segment again.`;
+                return;
             }
+            
+            // Second click: intersect rays
+            const intersectPoint = this.calculateRayIntersection(this.pendingSegmentRay, this.raycaster.ray);
+            
+            // Clean up pending state
+            this.cancelPendingSegmentation();
+            
+            const distanceToObj = exportCam.position.distanceTo(intersectPoint);
             
             // Calculate optimal standoff distance
             // We want the object to occupy ~70% of the screen width
