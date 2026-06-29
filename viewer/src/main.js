@@ -138,6 +138,62 @@ function initRenderer() {
         });
     }
 
+    // 9.5 Camera View Animation Shortcuts (1, 2, 3)
+    let isAnimatingCamera = false;
+    let cameraAnimStartPosition = new THREE.Vector3();
+    let cameraAnimStartQuaternion = new THREE.Quaternion();
+    let cameraAnimTargetPosition = new THREE.Vector3();
+    let cameraAnimTargetQuaternion = new THREE.Quaternion();
+    let cameraAnimProgress = 0;
+    const animDuration = 0.3; // seconds
+
+    window.addEventListener('keydown', (event) => {
+        // Ignore if typing in an input
+        if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+
+        const distance = camera.position.distanceTo(orbitControls.target);
+        let handled = false;
+        const targetPos = new THREE.Vector3().copy(orbitControls.target);
+
+        if (event.code === 'Digit1') {
+            // Right View (+X)
+            cameraAnimTargetPosition.set(targetPos.x + distance, targetPos.y, targetPos.z);
+            handled = true;
+        } else if (event.code === 'Digit2') {
+            // Top View (+Y)
+            cameraAnimTargetPosition.set(targetPos.x, targetPos.y + distance, targetPos.z);
+            handled = true;
+        } else if (event.code === 'Digit3') {
+            // Front View (+Z)
+            cameraAnimTargetPosition.set(targetPos.x, targetPos.y, targetPos.z + distance);
+            handled = true;
+        }
+
+        if (handled) {
+            // Calculate target quaternion to look at the center
+            const dummyCamera = camera.clone();
+            dummyCamera.position.copy(cameraAnimTargetPosition);
+            dummyCamera.up.set(0, 1, 0);
+            if (event.code === 'Digit2') dummyCamera.up.set(0, 0, -1); // Prevent gimbal lock for top view
+            dummyCamera.lookAt(targetPos);
+            cameraAnimTargetQuaternion.copy(dummyCamera.quaternion);
+
+            cameraAnimStartPosition.copy(camera.position);
+            cameraAnimStartQuaternion.copy(camera.quaternion);
+
+            isAnimatingCamera = true;
+            cameraAnimProgress = 0;
+            
+            // Force orbit controls if fly controls were active
+            if (fpsControls.enabled) {
+                fpsControls.enabled = false;
+                activeControls = orbitControls;
+                const toggleBtn = document.getElementById('toggle-camera-btn');
+                if (toggleBtn) toggleBtn.innerText = 'Camera: Orbit';
+            }
+        }
+    });
+
     // 10. Animation Loop & FPS counter
     const fpsCounter = document.getElementById('fps-counter');
     const clock = new THREE.Clock();
@@ -149,7 +205,20 @@ function initRenderer() {
 
         const delta = clock.getDelta();
 
-        if (activeControls === orbitControls) {
+        if (isAnimatingCamera) {
+            cameraAnimProgress += delta / animDuration;
+            if (cameraAnimProgress >= 1) {
+                cameraAnimProgress = 1;
+                isAnimatingCamera = false;
+            }
+            // Ease-out cubic
+            const t = 1 - Math.pow(1 - cameraAnimProgress, 3);
+            camera.position.lerpVectors(cameraAnimStartPosition, cameraAnimTargetPosition, t);
+            camera.quaternion.slerpQuaternions(cameraAnimStartQuaternion, cameraAnimTargetQuaternion, t);
+            
+            orbitControls.update();
+            viewHelper.center.copy(orbitControls.target);
+        } else if (activeControls === orbitControls) {
             if (viewHelper.animating) {
                 viewHelper.update(delta);
             } else {

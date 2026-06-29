@@ -45,6 +45,7 @@ The `requirements.txt` installs the following key components:
 * **`fastapi` & `uvicorn[standard]`**: The core web framework and server to run the API.
 * **`python-multipart`**: Required for handling file uploads (e.g., uploading your dataset of images).
 * **`numpy`, `plyfile`, `trimesh`, `opencv-python`**: Essential libraries for image processing and manipulating 3D point cloud data.
+* **`torch`, `ultralytics`, `segment-anything-hq`, `timm`, `CLIP`**: Machine learning libraries for running the semantic segmentation pipeline (YOLO & SAM HQ).
 
 ### Running the Server
 Once installed, you can start the development server by running:
@@ -113,3 +114,34 @@ To verify the installation and check for CUDA support, run:
 colmap help
 ```
 Check the first line of the output. If you installed it correctly via Conda, it should say `... with CUDA`. If it says `without CUDA`, you will need to disable GPU mode in the pipeline settings.
+
+---
+
+## 4. Machine Learning Checkpoints (Segmentation)
+
+For the advanced semantic segmentation scripts (like `dev/reprojection/masker3.py`), you need to download specific model checkpoints into the `dev/checkpoints` directory.
+
+### Setup Steps
+1. Navigate to the project root and create the checkpoints directory:
+```bash
+mkdir -p dev/checkpoints
+cd dev/checkpoints
+```
+
+2. Download the SAM HQ checkpoint:
+```bash
+wget https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_h.pth
+```
+
+3. Download the YOLOE-26 Checkpoints:
+You can trigger the Ultralytics package to download the YOLO checkpoints automatically by creating and running a quick python script inside that same folder:
+```bash
+cat << 'EOF' > download_yolo.py
+from ultralytics import YOLO
+YOLO('yoloe-26x-seg.pt')
+YOLO('yoloe-26x-seg-pf.pt')
+EOF
+python download_yolo.py
+rm download_yolo.py
+```
+*(Make sure to run these commands from inside the `dev/checkpoints` folder so the `.pt` files are saved exactly there).*
