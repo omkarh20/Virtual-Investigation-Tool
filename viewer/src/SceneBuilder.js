@@ -1,14 +1,16 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ManifestLoader } from './ManifestLoader.js';
 import { SplatMesh } from '@sparkjsdev/spark';
 
 export class SceneBuilder {
-    constructor(scene, camera, transformControls, disableControlsFn, enableControlsFn) {
+    constructor(scene, camera, transformControls, disableControlsFn, enableControlsFn, physicsManager) {
         this.scene = scene;
         this.camera = camera;
         this.transformControls = transformControls;
         this.disableControls = disableControlsFn;
         this.enableControls = enableControlsFn;
+        this.physicsManager = physicsManager;
 
         this.segments = new Map();       // id -> splatMesh
         this.hitboxes = new Map();       // id -> hitbox mesh
@@ -123,47 +125,67 @@ export class SceneBuilder {
         this.scene.add(splat);
         this.segments.set(segment.id, splat);
         
-        // Create invisible hitbox for raycasting
-        const width = segment.bbox.max[0] - segment.bbox.min[0];
-        const height = segment.bbox.max[1] - segment.bbox.min[1];
-        const depth = segment.bbox.max[2] - segment.bbox.min[2];
-        const geometry = new THREE.BoxGeometry(width, height, depth);
-        const material = new THREE.MeshBasicMaterial({ 
-            transparent: true, 
-            opacity: 0,
-            depthWrite: false 
-        });
-        const hitbox = new THREE.Mesh(geometry, material);
-
-        // Flip Y and Z to match the 180° X-rotation on the SplatMesh
-        hitbox.position.set(segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
-        hitbox.userData = {
-            id: segment.id,
-            label: segment.label,
-            movable: segment.movable,
-            splatRef: splat  // Direct reference to the SplatMesh for movement
-        };
-        
-        // Wireframe edges
-        const edges = new THREE.EdgesGeometry(geometry);
         const color = segment.movable ? 0xef4444 : 0x3b82f6;
-        const lineMat = new THREE.LineBasicMaterial({ color: color, opacity: 0.8, transparent: true });
-        const line = new THREE.LineSegments(edges, lineMat);
-        line.visible = this.interactionMode;
-        
-        hitbox.userData.edgeHelper = line;
-        hitbox.userData.originalColor = color;
-        hitbox.add(line);
-        
-        this.scene.add(hitbox);
-        this.hitboxes.set(segment.id, hitbox);
+        const glbUrl = url.replace(segment.file, segment.collision);
+        const loader = new GLTFLoader();
 
-        // Store original positions and rotations for reset
-        this.originalPositions.set(segment.id, {
-            hitbox: hitbox.position.clone(),
-            splat: splat.position.clone(),
-            hitboxQuat: hitbox.quaternion.clone(),
-            splatQuat: splat.quaternion.clone()
+        loader.load(glbUrl, (gltf) => {
+            let mesh = null;
+            gltf.scene.traverse((child) => {
+                if (child.isMesh && !mesh) mesh = child;
+            });
+            if (!mesh) return;
+
+            const geometry = mesh.geometry;
+            // Shift vertices so the mesh origin is at the centroid
+            geometry.translate(-segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
+
+            const material = new THREE.MeshBasicMaterial({ 
+                color: color, 
+                wireframe: false,
+                transparent: true,
+                opacity: 0.3,    
+                depthWrite: false, 
+                visible: this.interactionMode
+            });
+            const hitbox = new THREE.Mesh(geometry, material);
+
+            // Place the mesh at the flipped centroid and apply the 180 deg X rotation
+            hitbox.position.set(segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
+            hitbox.quaternion.set(1, 0, 0, 0);
+
+            hitbox.userData = {
+                id: segment.id,
+                label: segment.label,
+                movable: segment.movable,
+                splatRef: splat
+            };
+            
+            // Wireframe edges
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lineMat = new THREE.LineBasicMaterial({ color: color, opacity: 0.8, transparent: true });
+            const line = new THREE.LineSegments(edges, lineMat);
+            line.visible = this.interactionMode;
+            
+            hitbox.userData.edgeHelper = line;
+            hitbox.userData.originalColor = color;
+            hitbox.add(line);
+            
+            this.scene.add(hitbox);
+            this.hitboxes.set(segment.id, hitbox);
+
+            // Register with physics engine!
+            if (this.physicsManager) {
+                this.physicsManager.createBodyFromMesh(segment.id, hitbox, segment.movable);
+            }
+
+            // Store original positions and rotations for reset
+            this.originalPositions.set(segment.id, {
+                hitbox: hitbox.position.clone(),
+                splat: splat.position.clone(),
+                hitboxQuat: hitbox.quaternion.clone(),
+                splatQuat: splat.quaternion.clone()
+            });
         });
     }
 
@@ -216,6 +238,7 @@ export class SceneBuilder {
                 if (hitbox.userData.edgeHelper) {
                     if (hitbox.userData.id === this.selectedId) continue; // skip selected
                     hitbox.userData.edgeHelper.visible = this.interactionMode;
+                    hitbox.material.visible = this.interactionMode;
                 }
             }
 
@@ -251,6 +274,8 @@ export class SceneBuilder {
         if (hitbox.userData.edgeHelper) {
             hitbox.userData.edgeHelper.material.color.setHex(0x22ff44);
             hitbox.userData.edgeHelper.visible = true;
+            hitbox.material.color.setHex(0x22ff44);
+            hitbox.material.visible = true;
         }
 
         // Reset gizmo mode to translate by default upon selection
@@ -267,6 +292,10 @@ export class SceneBuilder {
         if (resetObjBtn) resetObjBtn.style.display = 'block';
 
         this.transformControls.attach(hitbox);
+
+        if (this.physicsManager && window.physicsEnabled) {
+            this.physicsManager.setKinematic(this.selectedId, true);
+        }
     }
 
     deselectObject() {
@@ -277,6 +306,8 @@ export class SceneBuilder {
             if (hitbox.userData.edgeHelper) {
                 hitbox.userData.edgeHelper.material.color.setHex(hitbox.userData.originalColor);
                 hitbox.userData.edgeHelper.visible = this.interactionMode;
+                hitbox.material.color.setHex(hitbox.userData.originalColor);
+                hitbox.material.visible = this.interactionMode;
             }
         }
 
@@ -285,6 +316,14 @@ export class SceneBuilder {
 
         const resetObjBtn = document.getElementById('reset-object-btn');
         if (resetObjBtn) resetObjBtn.style.display = 'none';
+
+        if (this.physicsManager && this.selectedId !== null && window.physicsEnabled) {
+            const hitbox = this.hitboxes.get(this.selectedId);
+            if (hitbox) {
+                this.physicsManager.updateBodyTransform(this.selectedId, hitbox.position, hitbox.quaternion);
+            }
+            this.physicsManager.setKinematic(this.selectedId, false);
+        }
 
         this.transformControls.detach();
         this.selectedId = null;
@@ -346,6 +385,11 @@ export class SceneBuilder {
             
             // The new position is the hitbox's position + the rotated lever arm
             splat.position.copy(hitbox.position).add(pivotOffset);
+
+            // Sync back to physics engine so it doesn't fight the user!
+            if (this.physicsManager && window.physicsEnabled) {
+                this.physicsManager.updateBodyTransform(this.selectedId, hitbox.position, hitbox.quaternion);
+            }
         });
 
         // Disable camera controls while dragging the gizmo
@@ -356,6 +400,25 @@ export class SceneBuilder {
                 this.enableControls();
             }
         });
+    }
+
+    syncSplatsToHitboxes() {
+        // Runs every frame to strictly tie the visual SplatMeshes to the physical hitboxes
+        for (const [id, hitbox] of this.hitboxes.entries()) {
+            const splat = this.segments.get(id);
+            const orig = this.originalPositions.get(id);
+            if (!splat || !orig) continue;
+
+            const origQuatInv = orig.hitboxQuat.clone().invert();
+            const deltaQuat = hitbox.quaternion.clone().multiply(origQuatInv);
+            
+            splat.quaternion.copy(deltaQuat).multiply(orig.splatQuat);
+
+            const pivotOffset = new THREE.Vector3().subVectors(orig.splat, orig.hitbox);
+            pivotOffset.applyQuaternion(deltaQuat);
+            
+            splat.position.copy(hitbox.position).add(pivotOffset);
+        }
     }
 
     // ── Reset ───────────────────────────────────────────────────────────────
@@ -391,6 +454,10 @@ export class SceneBuilder {
                 splat.position.copy(positions.splat);
                 splat.quaternion.copy(positions.splatQuat);
             }
+        }
+        
+        if (this.physicsManager && window.physicsEnabled) {
+            this.physicsManager.resetAll();
         }
     }
 

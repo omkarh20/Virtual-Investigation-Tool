@@ -34,3 +34,6 @@ dev
 
 # Outputs
 backend/jobs
+
+# Checkpoints
+checkpoints/

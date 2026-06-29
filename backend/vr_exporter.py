@@ -86,12 +86,33 @@ def process_vr_export(job_id: str, input_ply_path: str, output_dir: str):
         extents = bmax - bmin
         centroid = (bmin + bmax) / 2.0
         
-        # 3. Write the collision GLB
-        # If any extent is exactly 0 (e.g. flat plane), pad it slightly for physics
-        extents = np.maximum(extents, 0.01)
-        collision_box = trimesh.creation.box(extents=extents)
-        collision_box.apply_translation(centroid)
-        collision_box.export(glb_path)
+        # 3. Generate Convex Hull for Collision
+        points = np.column_stack((x, y, z))
+        collision_type = "convex_hull"
+        
+        if len(points) >= 4:
+            try:
+                # Try generating the convex hull
+                collision_mesh = trimesh.points.PointCloud(points).convex_hull
+                
+                # Check if the hull is valid/has volume. If it is flat, fallback.
+                if collision_mesh.is_empty or collision_mesh.volume < 1e-6:
+                    raise ValueError("Hull is flat or empty")
+            except Exception as e:
+                # Fallback to box if hull generation fails (e.g. coplanar points)
+                print(f"[VR Export] Hull generation failed for {label_name} ({e}). Falling back to box.")
+                collision_type = "box"
+                extents_pad = np.maximum(extents, 0.01)
+                collision_mesh = trimesh.creation.box(extents=extents_pad)
+                collision_mesh.apply_translation(centroid)
+        else:
+            # Fallback to box if not enough points
+            collision_type = "box"
+            extents_pad = np.maximum(extents, 0.01)
+            collision_mesh = trimesh.creation.box(extents=extents_pad)
+            collision_mesh.apply_translation(centroid)
+            
+        collision_mesh.export(glb_path)
         
         # 4. Append to manifest
         manifest["segments"].append({
@@ -99,6 +120,7 @@ def process_vr_export(job_id: str, input_ply_path: str, output_dir: str):
             "label": label_name,
             "file": ply_filename,
             "collision": glb_filename,
+            "collision_type": collision_type,
             "bbox": {
                 "min": bmin.tolist(),
                 "max": bmax.tolist()

@@ -20,6 +20,9 @@ export class VirtualCameraManager {
         // An invisible plane at Y=0 for placing initial POIs
         this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
+        this.pendingSegmentRay = null;
+        this.pendingRayLine = null;
+
         this.setupUI();
         this.setupInteractions();
     }
@@ -69,6 +72,7 @@ export class VirtualCameraManager {
             });
             this.pois = [];
             this.transformControls.detach();
+            this.cancelPendingSegmentation();
             this.updatePoiList();
             this.updatePreview();
         });
@@ -99,6 +103,11 @@ export class VirtualCameraManager {
         }
 
         this.exportBtn.addEventListener('click', () => this.exportCameras());
+
+        this.segmentThisBtn = document.getElementById('vc-segment-this-btn');
+        if (this.segmentThisBtn) {
+            this.segmentThisBtn.addEventListener('click', () => this.autoSegmentCurrentView());
+        }
     }
 
     recalculateCameraCounts(distributeEqually = false) {
@@ -186,7 +195,7 @@ export class VirtualCameraManager {
 
     updatePoiList() {
         if (!this.poiListContainer) return;
-        
+
         if (this.pois.length === 0) {
             this.poiListContainer.innerHTML = '<p style="font-size: 0.8rem; color: #cbd5e1; text-align: center; margin: 5px 0;">No markers placed.</p>';
             return;
@@ -497,7 +506,6 @@ export class VirtualCameraManager {
             cameraCount: 50,
             showFrustums: true
         };
-        
         this.scene.add(sphere);
         this.pois.push(sphere);
 
@@ -511,6 +519,45 @@ export class VirtualCameraManager {
 
         this.updatePoiList();
         this.updatePreview();
+    }
+
+    cancelPendingSegmentation() {
+        this.pendingSegmentRay = null;
+        if (this.pendingRayLine) {
+            this.scene.remove(this.pendingRayLine);
+            this.pendingRayLine.geometry.dispose();
+            this.pendingRayLine.material.dispose();
+            this.pendingRayLine = null;
+        }
+    }
+
+    calculateRayIntersection(ray1, ray2) {
+        const p1 = ray1.origin, d1 = ray1.direction;
+        const p2 = ray2.origin, d2 = ray2.direction;
+        
+        const w0 = new THREE.Vector3().subVectors(p1, p2);
+        
+        const a = d1.dot(d1);
+        const b = d1.dot(d2);
+        const c = d2.dot(d2);
+        const d = d1.dot(w0);
+        const e = d2.dot(w0);
+        
+        const D = a * c - b * b;
+        let sc, tc;
+        
+        if (D < 1e-6) {
+            sc = 0;
+            tc = d / b; 
+        } else {
+            sc = (b * e - c * d) / D;
+            tc = (a * e - b * d) / D;
+        }
+        
+        const pA = new THREE.Vector3().copy(d1).multiplyScalar(sc).add(p1);
+        const pB = new THREE.Vector3().copy(d2).multiplyScalar(tc).add(p2);
+        
+        return new THREE.Vector3().addVectors(pA, pB).multiplyScalar(0.5);
     }
 
     // ---------------------------------------------------------------------------
@@ -606,12 +653,12 @@ export class VirtualCameraManager {
         if (!this.active) return;
 
         const cameras = this.buildVirtualCameraList();
-        
+
         const [w, h] = this.resSelect.value.split('x').map(Number);
         const aspect = w / h;
         const fov = 60; // Assuming 60 deg FOV for export
         const fovRad = (fov * Math.PI) / 180;
-        
+
         const far = 0.5; // Draw small frustums
         const hFar = 2 * Math.tan(fovRad / 2) * far;
         const wFar = hFar * aspect;
@@ -626,7 +673,7 @@ export class VirtualCameraManager {
             if (cam.poi && cam.poi.userData.showFrustums === false) return;
 
             m.lookAt(cam.position, cam.target, up);
-            
+
             // Three.js cameras look down -Z. We need a quaternion for the frustum lines
             const quat = new THREE.Quaternion().setFromRotationMatrix(m);
 
@@ -643,7 +690,7 @@ export class VirtualCameraManager {
             points.push(p1, p2, p2, p3, p3, p4, p4, p1);
 
             const geometry = new THREE.BufferGeometry().setFromPoints(points);
-            const material = new THREE.LineBasicMaterial({ 
+            const material = new THREE.LineBasicMaterial({
                 color: cam.tier === 'global' ? colorGlobal : colorPoi,
                 transparent: true,
                 opacity: 0.6
@@ -693,7 +740,7 @@ export class VirtualCameraManager {
             zip = new JSZip();
             zipImages = zip.folder("images");
         }
-        
+
         const [width, height] = this.resSelect.value.split('x').map(Number);
         const cameras = this.buildVirtualCameraList();
         const total = cameras.length;
@@ -708,7 +755,7 @@ export class VirtualCameraManager {
         this.transformControls.detach();
         this.pois.forEach(p => p.visible = false);
         this.previewLines.forEach(l => l.visible = false);
-        
+
         // Save original scene state
         const originalBg = this.scene.background;
         this.scene.background = new THREE.Color(0xffffff); // White background for YOLO/SAM
@@ -721,7 +768,7 @@ export class VirtualCameraManager {
         const imgData = ctx.createImageData(width, height);
 
         const cameraEntries = [];
-        
+
         // Setup the export camera
         const exportCam = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
 
@@ -737,14 +784,14 @@ export class VirtualCameraManager {
                 // 1. Render once to trigger the async splat sorting worker
                 this.renderer.setRenderTarget(renderTarget);
                 this.renderer.render(this.scene, exportCam);
-                
+
                 // 2. Yield the main thread to allow the WebWorker to finish sorting
                 // 100ms is a safe, robust duration that ensures the worker completes 
                 // even on slower machines, without needing internal API hooks.
                 await new Promise(resolve => setTimeout(resolve, 100));
 
                 // 3. Render a second time to draw the newly sorted splats
-                this.renderer.render(this.scene, exportCam); 
+                this.renderer.render(this.scene, exportCam);
 
                 // Read pixels
                 const buffer = new Uint8Array(width * height * 4);
@@ -770,7 +817,7 @@ export class VirtualCameraManager {
 
                 // Compress to PNG Blob
                 const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-                
+
                 // Write to file or ZIP
                 const imgName = `${String(i).padStart(5, '0')}.png`;
                 if (!useZip) {
@@ -789,7 +836,7 @@ export class VirtualCameraManager {
                 const fx = fy;
 
                 // Extrinsics: camera-to-world rotation for the carver
-                const vm = exportCam.matrixWorldInverse.elements; 
+                const vm = exportCam.matrixWorldInverse.elements;
                 // Three.js stores matrices column-major: element index = col*4 + row
                 //
                 // R_c2w_three (camera-to-world in Three.js space) is the transpose of
@@ -806,9 +853,9 @@ export class VirtualCameraManager {
                 //
                 // Combined: rotation = M * R_c2w_three * M
                 const rotation = [
-                    [ vm[0], -vm[1], -vm[2]],
-                    [-vm[4],  vm[5],  vm[6]],
-                    [-vm[8],  vm[9],  vm[10]]
+                    [vm[0], -vm[1], -vm[2]],
+                    [-vm[4], vm[5], vm[6]],
+                    [-vm[8], vm[9], vm[10]]
                 ];
 
                 cameraEntries.push({
@@ -859,9 +906,168 @@ export class VirtualCameraManager {
             this.scene.background = originalBg;
             this.pois.forEach(p => p.visible = true);
             this.updatePreview(); // restores preview lines based on toggle
-            
+
             this.isExporting = false;
             this.exportBtn.disabled = false;
+        }
+    }
+
+    async autoSegmentCurrentView() {
+        this.statusText.innerText = "Capturing view for segmentation...";
+        this.segmentThisBtn.disabled = true;
+        
+        const [width, height] = this.resSelect.value.split('x').map(Number);
+        
+        // Hide gizmos and POIs
+        this.transformControls.detach();
+        this.pois.forEach(p => p.visible = false);
+        this.previewLines.forEach(l => l.visible = false);
+        
+        const originalBg = this.scene.background;
+        this.scene.background = new THREE.Color(0xffffff);
+
+        // Render to offscreen canvas
+        const renderTarget = new THREE.WebGLRenderTarget(width, height, {
+            format: THREE.RGBAFormat,
+            type: THREE.UnsignedByteType
+        });
+
+        const exportCam = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
+        exportCam.position.copy(this.camera.position);
+        exportCam.quaternion.copy(this.camera.quaternion);
+        exportCam.updateMatrixWorld();
+
+        this.renderer.setRenderTarget(renderTarget);
+        this.renderer.render(this.scene, exportCam);
+        await new Promise(resolve => setTimeout(resolve, 100)); // let sorting finish
+        this.renderer.render(this.scene, exportCam);
+
+        const buffer = new Uint8Array(width * height * 4);
+        this.renderer.readRenderTargetPixels(renderTarget, 0, 0, width, height, buffer);
+        
+        const rawImgData = new ImageData(new Uint8ClampedArray(buffer), width, height);
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = width;
+        tempCanvas.height = height;
+        tempCanvas.getContext('2d').putImageData(rawImgData, 0, 0);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, width, height);
+        ctx.save();
+        ctx.translate(0, height);
+        ctx.scale(1, -1);
+        ctx.drawImage(tempCanvas, 0, 0);
+        ctx.restore();
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        
+        // Restore scene
+        this.renderer.setRenderTarget(null);
+        this.scene.background = originalBg;
+        this.pois.forEach(p => p.visible = true);
+        this.updatePreview();
+
+        try {
+            const formData = new FormData();
+            formData.append('file', blob, 'capture.png');
+            
+            const promptStr = prompt("Enter object to segment (or leave blank for auto):", "");
+            if (promptStr) {
+                formData.append('prompt', promptStr);
+            }
+
+            this.statusText.innerText = "Running object detection...";
+            const res = await fetch(`http://${window.location.hostname}:8000/segment-view`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                throw new Error(`Server returned status ${res.status}`);
+            }
+
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+
+            if (!data.detections || data.detections.length === 0) {
+                this.statusText.innerText = "No objects detected.";
+                return;
+            }
+
+            const bestObj = data.detections[0];
+            console.log("Detected object:", bestObj);
+
+            // Calculate 3D centroid
+            const ndcX = (bestObj.center_x / width) * 2 - 1;
+            const ndcY = -(bestObj.center_y / height) * 2 + 1;
+            
+            this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), exportCam);
+            
+            if (!this.pendingSegmentRay) {
+                // First click: store the ray and draw a preview line
+                this.pendingSegmentRay = this.raycaster.ray.clone();
+                
+                const points = [
+                    this.pendingSegmentRay.origin,
+                    this.pendingSegmentRay.origin.clone().add(this.pendingSegmentRay.direction.clone().multiplyScalar(20))
+                ];
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineDashedMaterial({ color: 0x00ff00, dashSize: 0.5, gapSize: 0.2 });
+                this.pendingRayLine = new THREE.Line(geometry, material);
+                this.pendingRayLine.computeLineDistances();
+                this.scene.add(this.pendingRayLine);
+                
+                this.statusText.innerText = `Captured angle 1 for ${bestObj.class}. Move camera and click Segment again.`;
+                return;
+            }
+            
+            // Second click: intersect rays
+            const intersectPoint = this.calculateRayIntersection(this.pendingSegmentRay, this.raycaster.ray);
+            
+            // Clean up pending state
+            this.cancelPendingSegmentation();
+            
+            const distanceToObj = exportCam.position.distanceTo(intersectPoint);
+            
+            // Calculate optimal standoff distance
+            // We want the object to occupy ~70% of the screen width
+            const targetWidthPx = width * 0.7;
+            const bbWidthPx = bestObj.width;
+            
+            // new_dist = current_dist * (current_px / target_px)
+            let optimalDistance = distanceToObj * (bbWidthPx / targetWidthPx);
+            
+            // Clamp to reasonable values
+            optimalDistance = Math.max(0.5, Math.min(optimalDistance, 10.0));
+            
+            // Clear existing POIs and add the new one
+            this.pois.forEach(poi => {
+                this.scene.remove(poi);
+                poi.geometry.dispose();
+                poi.material.dispose();
+            });
+            this.pois = [];
+            
+            this.createPOI(intersectPoint);
+            
+            // Update UI
+            if (this.standoffInput) {
+                this.standoffInput.value = optimalDistance.toFixed(1);
+                if (this.standoffValText) this.standoffValText.innerText = `${optimalDistance.toFixed(1)} units`;
+            }
+            
+            this.updatePreview();
+            this.statusText.innerText = `Found ${bestObj.class}! Auto-set camera radius to ${optimalDistance.toFixed(1)}.`;
+            
+        } catch (err) {
+            console.error(err);
+            this.statusText.innerText = `Error: ${err.message}`;
+        } finally {
+            this.segmentThisBtn.disabled = false;
         }
     }
 }

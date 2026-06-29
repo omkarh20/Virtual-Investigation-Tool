@@ -9,7 +9,7 @@
 
 import { router } from './router.js';
 
-const BACKEND = 'http://localhost:8000';
+const BACKEND = `http://${window.location.hostname}:8000`;
 
 export function initHomePage() {
     // ── Element refs ─────────────────────────────────────────────────────────
@@ -73,6 +73,7 @@ export function initHomePage() {
 
                 card.addEventListener('click', () => {
                     if (job.status === 'done') {
+                        sessionStorage.setItem('vit_manifest_url', `${BACKEND}/download/${job.job_id}/manifest.json`);
                         router.goRenderer();
                     } else {
                         router.goPipeline(job.job_id);

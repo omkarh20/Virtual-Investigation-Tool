@@ -19,6 +19,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from ultralytics import YOLO
+import cv2
+import numpy as np
+
+import sys
+import torch
+from PIL import Image
+import io
+
+# groundingdino is installed via pip
+
+from groundingdino.util.inference import load_model as load_dino_model, predict as dino_predict
+import groundingdino.datasets.transforms as T
+
 app = FastAPI(title="VIT Backend", version="0.1.0-modular")
 
 active_tasks = set()
@@ -532,5 +546,88 @@ async def get_job_tree(job_id: str) -> JSONResponse:
     tree = get_directory_tree(job_dir)
     return JSONResponse(tree)
 
+_dino_model_instance = None
+
+def get_dino_model():
+    global _dino_model_instance
+    if _dino_model_instance is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dino_config = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dev", "checkpoints", "GroundingDINO_SwinT_OGC.py"))
+        dino_weights = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dev", "checkpoints", "groundingdino_swint_ogc.pth"))
+        _dino_model_instance = load_dino_model(dino_config, dino_weights).to(device)
+    return _dino_model_instance
+
+@app.post("/segment-view")
+async def segment_view(file: UploadFile = File(...), prompt: str = Form(None)):
+    try:
+        content = await file.read()
+        
+        # Save the captured view image to dev/virtual_camera/outputs/
+        output_dir = os.path.join(os.path.dirname(__file__), "..", "dev", "virtual_camera", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        import time
+        timestamp = int(time.time())
+        save_path = os.path.join(output_dir, f"segment_view_{timestamp}.png")
+        with open(save_path, "wb") as f:
+            f.write(content)
+        
+        transform = T.Compose([
+            T.RandomResize([800], max_size=1333),
+            T.ToTensor(),
+            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ])
+        image_source = Image.open(io.BytesIO(content)).convert("RGB")
+        image_transformed, _ = transform(image_source, None)
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = get_dino_model()
+        
+        dino_prompt = (prompt if prompt else "object") + " ."
+        
+        boxes, logits, phrases = dino_predict(
+            model=model, 
+            image=image_transformed, 
+            caption=dino_prompt,
+            box_threshold=0.3, 
+            text_threshold=0.25, 
+            device=device
+        )
+        
+        detections = []
+        if len(boxes) > 0:
+            W, H = image_source.size
+            boxes_xyxy = boxes * torch.Tensor([W, H, W, H])
+            boxes_xyxy[:, :2] -= boxes_xyxy[:, 2:] / 2
+            boxes_xyxy[:, 2:] += boxes_xyxy[:, :2]
+            
+            for box, logit, phrase in zip(boxes_xyxy, logits, phrases):
+                x1, y1, x2, y2 = box.tolist()
+                detections.append({
+                    "class": phrase,
+                    "confidence": float(logit),
+                    "bbox": [x1, y1, x2, y2],
+                    "width": x2 - x1,
+                    "height": y2 - y1,
+                    "center_x": (x1 + x2) / 2,
+                    "center_y": (y1 + y2) / 2
+                })
+        
+        # Sort by size or proximity to center
+        img_center_x, img_center_y = image_source.size[0] / 2, image_source.size[1] / 2
+        
+        for d in detections:
+            dist = np.sqrt((d["center_x"] - img_center_x)**2 + (d["center_y"] - img_center_y)**2)
+            d["score"] = (d["width"] * d["height"]) / (dist + 1)
+            
+        detections.sort(key=lambda x: x["score"], reverse=True)
+        
+        return JSONResponse({"status": "success", "detections": detections})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[Error] Segmentation failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 os.makedirs(JOBS_DIR, exist_ok=True)
 app.mount("/jobs", StaticFiles(directory=JOBS_DIR), name="jobs")
+# Triggering reload for GroundingDINO transformers fix again
