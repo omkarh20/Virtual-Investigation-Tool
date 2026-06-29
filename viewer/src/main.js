@@ -111,7 +111,7 @@ function initRenderer() {
     const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls);
 
     // 8.5. VR Manager
-    const vrManager = new VRSessionManager(renderer, scene, camera, sceneBuilder.hitboxes, physicsManager);
+    const vrManager = new VRSessionManager(renderer, scene, camera, sceneBuilder.hitboxes, physicsManager, sceneBuilder);
 
     // 9. File Upload
     const loadFileBtn = document.getElementById('load-file-btn');

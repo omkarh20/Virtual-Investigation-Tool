@@ -53,6 +53,7 @@ export function initHomePage() {
                 `;
                 card.addEventListener('click', () => {
                     if (job.status === 'done') {
+                        sessionStorage.setItem('vit_manifest_url', `${BACKEND}/download/${job.job_id}/manifest.json`);
                         router.goRenderer();
                     } else {
                         router.goPipeline(job.job_id);
