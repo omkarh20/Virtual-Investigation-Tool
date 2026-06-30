@@ -138,6 +138,12 @@ export function initPipelinePage() {
             if (modeDir) modeDir.innerHTML = '📁 COLMAP Workspace Folder';
             if (modeVideo) modeVideo.style.display = 'none';
             setActiveMode('zip');
+        } else if (phase === 4) {
+            if (inputHelper) inputHelper.textContent = "(Provide a ZIP containing 'images/', 'point_cloud.ply', and 'cameras.json')";
+            if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Segmentation Input';
+            if (modeDir) modeDir.innerHTML = '📁 Segmentation Input Folder';
+            if (modeVideo) modeVideo.style.display = 'none';
+            setActiveMode('zip');
         } else {
             if (inputHelper) inputHelper.textContent = "(Video or Images)";
             if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Images';
@@ -148,14 +154,18 @@ export function initPipelinePage() {
             }
         }
 
+        const cfgSeg = document.getElementById('cfg-section-seg');
+
         if (isAdvancedMode) {
             if (cfgPrep) cfgPrep.style.display = (phase === 1) ? 'block' : 'none';
             if (cfgColmap) cfgColmap.style.display = (phase === 1 || phase === 2) ? 'block' : 'none';
             if (cfg3dgs) cfg3dgs.style.display = (phase === 3) ? 'block' : 'none';
+            if (cfgSeg) cfgSeg.style.display = (phase === 4) ? 'block' : 'none';
         } else {
             if (cfgPrep) cfgPrep.style.display = 'block';
             if (cfgColmap) cfgColmap.style.display = 'block';
             if (cfg3dgs) cfg3dgs.style.display = 'block';
+            if (cfgSeg) cfgSeg.style.display = 'block';
         }
     }
 
@@ -222,6 +232,14 @@ export function initPipelinePage() {
     if (cfgDense) {
         cfgDense.addEventListener('change', () => {
             if (stepRow2) stepRow2.style.display = cfgDense.checked ? 'grid' : 'none';
+        });
+    }
+
+    const segVoteSlider = document.getElementById('cfg-seg-vote-ratio');
+    const segVoteDisplay = document.getElementById('seg-vote-ratio-display');
+    if (segVoteSlider && segVoteDisplay) {
+        segVoteSlider.addEventListener('input', () => {
+            segVoteDisplay.textContent = segVoteSlider.value;
         });
     }
 
@@ -322,6 +340,9 @@ export function initPipelinePage() {
             gs_save_iterations: document.getElementById('cfg-gs-save-iters')?.value || "",
             gs_check_iterations: document.getElementById('cfg-gs-check-iters')?.value || "",
             gs_start_checkpoint: document.getElementById('cfg-gs-start-checkpoint')?.value || "",
+            seg_custom_objects: document.getElementById('cfg-seg-objects')?.value || "",
+            seg_vote_ratio: parseFloat(document.getElementById('cfg-seg-vote-ratio')?.value) || 0.5,
+            seg_mode: "auto",
         };
     }
 
@@ -559,7 +580,7 @@ export function initPipelinePage() {
         1: ['cfg-section-prep', 'cfg-section-colmap'],
         2: ['cfg-section-colmap'],
         3: ['cfg-section-3dgs'],
-        4: [],
+        4: ['cfg-section-seg'],
     };
 
     function populatePhaseConfigPreview(nextPhase) {
@@ -632,6 +653,13 @@ export function initPipelinePage() {
         if (checkIters !== null) cfg.gs_check_iterations = checkIters;
         const startCheck = val('cfg-gs-start-checkpoint');
         if (startCheck !== null) cfg.gs_start_checkpoint = startCheck;
+        
+        const segObjects = val('cfg-seg-objects');
+        if (segObjects !== null) cfg.seg_custom_objects = segObjects;
+        const segVoteRatio = val('cfg-seg-vote-ratio');
+        if (segVoteRatio !== null) cfg.seg_vote_ratio = parseFloat(segVoteRatio) || 0.5;
+        cfg.seg_mode = "auto";
+        
         return cfg;
     }
 
@@ -650,15 +678,46 @@ export function initPipelinePage() {
         downloadable.forEach(pid => {
             const step = STEPS.find(s => s.id === pid);
             const label = step ? step.label : `Phase ${pid}`;
-            const btn = document.createElement('a');
-            btn.href = `${BACKEND_URL}/download/${currentJobId}/${pid}`;
-            btn.target = '_blank';
-            btn.className = 'btn btn-secondary';
-            btn.innerHTML = `⬇ Download ${label}`;
-            btn.style.background = 'rgba(255,255,255,0.1)';
-            btn.style.border = '1px solid rgba(255,255,255,0.2)';
-            btn.style.color = 'white';
-            resultsList.appendChild(btn);
+            
+            if (pid === 4) {
+                const plyBtn = document.createElement('a');
+                plyBtn.href = `${BACKEND_URL}/download/${currentJobId}/4`;
+                plyBtn.target = '_blank';
+                plyBtn.className = 'btn btn-secondary';
+                plyBtn.innerHTML = '⬇ Download Labelled PLY';
+                plyBtn.style.background = 'rgba(255,255,255,0.1)';
+                plyBtn.style.border = '1px solid rgba(255,255,255,0.2)';
+                plyBtn.style.color = 'white';
+                resultsList.appendChild(plyBtn);
+
+                const zipBtn = document.createElement('a');
+                zipBtn.href = `${BACKEND_URL}/download/${currentJobId}/segmentation-zip`;
+                zipBtn.target = '_blank';
+                zipBtn.className = 'btn btn-secondary';
+                zipBtn.innerHTML = '⬇ Download Segmentation ZIP';
+                zipBtn.style.background = 'rgba(255,255,255,0.1)';
+                zipBtn.style.border = '1px solid rgba(255,255,255,0.2)';
+                zipBtn.style.color = 'white';
+                resultsList.appendChild(zipBtn);
+
+                const viewSegBtn = document.createElement('button');
+                viewSegBtn.className = 'btn btn-primary';
+                viewSegBtn.innerHTML = '🎮 Open in Renderer';
+                viewSegBtn.disabled = true;
+                viewSegBtn.title = 'Coming soon';
+                viewSegBtn.style.opacity = '0.4';
+                resultsList.appendChild(viewSegBtn);
+            } else {
+                const btn = document.createElement('a');
+                btn.href = `${BACKEND_URL}/download/${currentJobId}/${pid}`;
+                btn.target = '_blank';
+                btn.className = 'btn btn-secondary';
+                btn.innerHTML = `⬇ Download ${label}`;
+                btn.style.background = 'rgba(255,255,255,0.1)';
+                btn.style.border = '1px solid rgba(255,255,255,0.2)';
+                btn.style.color = 'white';
+                resultsList.appendChild(btn);
+            }
         });
     }
 

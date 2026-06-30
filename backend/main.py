@@ -101,11 +101,13 @@ async def push(job_id: str, msg: dict) -> None:
         except Exception as e:
             pass
 
+from runners.run_segmentation import run_segmentation
+
 PHASES = [
     {"id": 1, "label": "COLMAP",              "runner": run_colmap_pipeline},
     {"id": 2, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
     {"id": 3, "label": "3DGS Training",       "runner": run_3dgs_training},
-    {"id": 4, "label": "Segmentation",        "runner": "dummy", "simulated": True},
+    {"id": 4, "label": "Segmentation",        "runner": run_segmentation},
 ]
 
 async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
@@ -297,8 +299,8 @@ async def run_pipeline(body: dict) -> JSONResponse:
     jobs[job_id]["current_phase"] = start_phase
     save_job_metadata(job_id)
 
-    # If starting at phase 3 (3DGS), we need to extract the uploaded zip containing images & sparse
-    if start_phase == 3:
+    # If starting at phase 3 (3DGS) or 4 (Segmentation), we need to extract the uploaded zip
+    if start_phase in (3, 4):
         input_file = jobs[job_id]["input_path"]
         job_dir = os.path.join(JOBS_DIR, job_id)
         if input_file.endswith(".zip"):
@@ -306,7 +308,7 @@ async def run_pipeline(body: dict) -> JSONResponse:
                 with zipfile.ZipFile(input_file, 'r') as zip_ref:
                     zip_ref.extractall(job_dir)
             except Exception as e:
-                return JSONResponse({"error": f"Failed to extract zip for 3DGS: {e}"}, status_code=400)
+                return JSONResponse({"error": f"Failed to extract zip for phase {start_phase}: {e}"}, status_code=400)
 
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
@@ -392,14 +394,28 @@ async def download_phase(job_id: str, phase_id: int):
         return FileResponse(zip_path, media_type="application/zip", filename=f"colmap_phase{phase_id}.zip")
         
     elif phase_id == 4:
-        # Return .ply
-        ply_files = glob.glob(os.path.join(job_dir, "output", "point_cloud", "iteration_*", "point_cloud.ply"))
-        if not ply_files:
-            return JSONResponse({"error": "No .ply found"}, status_code=404)
-        ply_files.sort(key=os.path.getmtime, reverse=True)
-        return FileResponse(ply_files[0], media_type="application/octet-stream", filename="model.ply")
+        # Return labelled PLY
+        ply_path = os.path.join(job_dir, "segmentation", "labelled_point_cloud.ply")
+        if not os.path.exists(ply_path):
+            return JSONResponse({"error": "No labelled .ply found"}, status_code=404)
+        return FileResponse(ply_path, media_type="application/octet-stream", filename="labelled_point_cloud.ply")
         
     return JSONResponse({"error": "Download not supported for this phase"}, status_code=400)
+
+@app.get("/download/{job_id}/segmentation-zip")
+async def download_segmentation_zip(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+        
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    seg_dir = os.path.join(job_dir, "segmentation")
+    if not os.path.exists(seg_dir):
+        return JSONResponse({"error": "No segmentation output found"}, status_code=404)
+        
+    zip_path = os.path.join(job_dir, "segmentation_results.zip")
+    shutil.make_archive(zip_path[:-4], 'zip', seg_dir)
+    return FileResponse(zip_path, media_type="application/zip", filename="segmentation_results.zip")
 
 
 @app.websocket("/progress/{job_id}")
