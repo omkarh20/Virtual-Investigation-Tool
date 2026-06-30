@@ -57,12 +57,14 @@ export class VRSessionManager {
             this.scene.add(controllerGrip);
             
             // Add a laser pointer line extending from the controller
+            // We use a BufferGeometry where we can dynamically update the end point
             const geometry = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(0, 0, 0),
-                new THREE.Vector3(0, 0, -5) // 5 meters long laser
+                new THREE.Vector3(0, 0, -5) // 5 meters long default
             ]);
             const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
             const line = new THREE.Line(geometry, material);
+            controller.userData.laserLine = line; // Store reference to update later
             controller.add(line);
             
             this.controllers.push(controller);
@@ -330,10 +332,15 @@ export class VRSessionManager {
             this.scene.attach(this.grabbedObject);
             
             // Tell the physics engine exactly where we dropped it
+            const worldPos = new THREE.Vector3();
+            const worldQuat = new THREE.Quaternion();
+            this.grabbedObject.getWorldPosition(worldPos);
+            this.grabbedObject.getWorldQuaternion(worldQuat);
+            
             this.physicsManager.updateBodyTransform(
                 this.grabbedObject.userData.id,
-                this.grabbedObject.position,
-                this.grabbedObject.quaternion
+                worldPos,
+                worldQuat
             );
             
             // Turn gravity back on so it falls!
@@ -345,15 +352,52 @@ export class VRSessionManager {
     }
     
     update() {
+        // Dynamically adjust laser pointer length so it doesn't go through the UI panel
+        if (this.controllers && this.interactiveGroup && this.interactiveGroup.children.length > 0) {
+            this.controllers.forEach(controller => {
+                const laserLine = controller.userData.laserLine;
+                if (!laserLine) return;
+
+                this.tempMatrix.identity().extractRotation(controller.matrixWorld);
+                this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+                this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.tempMatrix);
+
+                // Raycast against the UI menus
+                const intersects = this.raycaster.intersectObjects(this.interactiveGroup.children, false);
+                
+                const positions = laserLine.geometry.attributes.position.array;
+                if (intersects.length > 0) {
+                    // Stop laser exactly at the UI panel
+                    const distance = intersects[0].distance;
+                    positions[5] = -distance; // set Z of the end point
+                } else {
+                    // Reset to 5 meters if pointing at nothing
+                    positions[5] = -5;
+                }
+                laserLine.geometry.attributes.position.needsUpdate = true;
+            });
+        }
+
         // While holding an object, we need to constantly update the physics engine
         // so that if you smash the object against a wall while holding it, 
         // the physics engine knows its exact position.
         if (this.grabbedObject) {
+            const worldPos = new THREE.Vector3();
+            const worldQuat = new THREE.Quaternion();
+            this.grabbedObject.getWorldPosition(worldPos);
+            this.grabbedObject.getWorldQuaternion(worldQuat);
+            
             this.physicsManager.updateBodyTransform(
                 this.grabbedObject.userData.id,
-                this.grabbedObject.position,
-                this.grabbedObject.quaternion
+                worldPos,
+                worldQuat
             );
+
+            // If physics is OFF, the standard loop won't sync the SplatMesh for us!
+            // We must manually tell SceneBuilder to update the Splat based on these global coordinates.
+            if (!window.physicsEnabled && this.sceneBuilder && this.sceneBuilder.syncSplatToHitboxWorld) {
+                this.sceneBuilder.syncSplatToHitboxWorld(this.grabbedObject.userData.id, worldPos, worldQuat);
+            }
         }
     }
 }

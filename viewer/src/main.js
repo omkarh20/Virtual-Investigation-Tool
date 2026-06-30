@@ -37,7 +37,6 @@ function initRenderer() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.autoClear = false;
     appContainer.appendChild(renderer.domElement);
 
     // 2. SparkRenderer
@@ -270,9 +269,12 @@ function initRenderer() {
 
         // Pause main render while VirtualCameraManager is exporting
         if (!vcManager.isExporting) {
-            renderer.clear();
             renderer.render(scene, camera);
-            viewHelper.render(renderer);
+            if (!renderer.xr.isPresenting) {
+                renderer.autoClear = false;
+                viewHelper.render(renderer);
+                renderer.autoClear = true;
+            }
         }
 
         // FPS
