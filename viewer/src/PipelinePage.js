@@ -16,11 +16,10 @@ const BACKEND_URL = `http://${window.location.hostname}:8000`;
 const BACKEND_WS  = `ws://${window.location.hostname}:8000`;
 
 const STEPS = [
-    { id: 1, label: 'Preparing Images' },
-    { id: 2, label: 'COLMAP' },
-    { id: 3, label: 'COLMAP Dense', optional: true },
-    { id: 4, label: '3DGS Training' },
-    { id: 5, label: 'Segmentation' },
+    { id: 1, label: 'COLMAP' },
+    { id: 2, label: 'COLMAP Dense', optional: true },
+    { id: 3, label: '3DGS Training' },
+    { id: 4, label: 'Segmentation' },
 ];
 
 export function initPipelinePage() {
@@ -70,6 +69,7 @@ export function initPipelinePage() {
 
     // Config inputs
     const cfgDense        = document.getElementById('cfg-dense');
+    const stepRow2        = document.getElementById('step-row-2');
     const stepRow3        = document.getElementById('step-row-3');
     const cfgFrameRate    = document.getElementById('cfg-frame-rate');
 
@@ -132,7 +132,7 @@ export function initPipelinePage() {
 
     function updateUploadHelperForPhase() {
         const phase = parseInt(cfgStartPhase?.value || "1");
-        if (phase === 4) {
+        if (phase === 3) {
             inputHelper.textContent = "(ZIP of COLMAP 'images' & 'sparse', or select natively)";
             modeVideo.style.display = 'none';
             setActiveMode('zip');
@@ -146,8 +146,8 @@ export function initPipelinePage() {
 
         if (isAdvancedMode) {
             if (cfgPrep) cfgPrep.style.display = (phase === 1) ? 'block' : 'none';
-            if (cfgColmap) cfgColmap.style.display = (phase === 2) ? 'block' : 'none';
-            if (cfg3dgs) cfg3dgs.style.display = (phase === 4) ? 'block' : 'none';
+            if (cfgColmap) cfgColmap.style.display = (phase === 1 || phase === 2) ? 'block' : 'none';
+            if (cfg3dgs) cfg3dgs.style.display = (phase === 3) ? 'block' : 'none';
         } else {
             if (cfgPrep) cfgPrep.style.display = 'block';
             if (cfgColmap) cfgColmap.style.display = 'block';
@@ -217,7 +217,7 @@ export function initPipelinePage() {
     // Toggle Dense visibility in UI
     if (cfgDense) {
         cfgDense.addEventListener('change', () => {
-            if (stepRow3) stepRow3.style.display = cfgDense.checked ? 'grid' : 'none';
+            if (stepRow2) stepRow2.style.display = cfgDense.checked ? 'grid' : 'none';
         });
     }
 
@@ -313,6 +313,11 @@ export function initPipelinePage() {
             colmap_dense_enable: document.getElementById('cfg-dense')?.checked ?? false,
             gs_iterations: parseInt(document.getElementById('cfg-gs-iterations')?.value || "30000", 10),
             gs_max_resolution: parseInt(document.getElementById('cfg-gs-resolution')?.value || "0", 10),
+            gs_sh_degree: parseInt(document.getElementById('cfg-gs-sh-degree')?.value || "3", 10),
+            gs_white_background: document.getElementById('cfg-gs-white-bg')?.checked ?? false,
+            gs_save_iterations: document.getElementById('cfg-gs-save-iters')?.value || "",
+            gs_check_iterations: document.getElementById('cfg-gs-check-iters')?.value || "",
+            gs_start_checkpoint: document.getElementById('cfg-gs-start-checkpoint')?.value || "",
         };
     }
 
@@ -361,7 +366,8 @@ export function initPipelinePage() {
         if (runSingleBtn) runSingleBtn.disabled = true;
         
         const config = getConfigData();
-        if (stepRow3) stepRow3.style.display = config.colmap_dense_enable ? 'grid' : 'none';
+        if (stepRow2) stepRow2.style.display = config.colmap_dense_enable ? 'grid' : 'none';
+        if (stepRow3) stepRow3.style.display = 'grid'; // Ensure 3DGS is always visible
 
         const start_phase = parseInt(cfgStartPhase?.value || "1");
         const end_phase = isSinglePhase ? start_phase : null;
@@ -546,10 +552,10 @@ export function initPipelinePage() {
     // ── Phase Config Preview ───────────────────────────────────────────────────
     // Map of which config section IDs to show for each phase
     const PHASE_CONFIG_SECTIONS = {
-        1: ['cfg-section-prep'],
+        1: ['cfg-section-prep', 'cfg-section-colmap'],
         2: ['cfg-section-colmap'],
-        3: ['cfg-section-colmap'],
-        4: ['cfg-section-3dgs'],
+        3: ['cfg-section-3dgs'],
+        4: [],
     };
 
     function populatePhaseConfigPreview(nextPhase) {
@@ -612,6 +618,16 @@ export function initPipelinePage() {
         if (iter !== null) cfg.gs_iterations = parseInt(iter, 10);
         const res = val('cfg-gs-resolution');
         if (res !== null) cfg.gs_max_resolution = parseInt(res, 10);
+        const sh = val('cfg-gs-sh-degree');
+        if (sh !== null) cfg.gs_sh_degree = parseInt(sh, 10);
+        const bg = val('cfg-gs-white-bg');
+        if (bg !== null) cfg.gs_white_background = bg;
+        const saveIters = val('cfg-gs-save-iters');
+        if (saveIters !== null) cfg.gs_save_iterations = saveIters;
+        const checkIters = val('cfg-gs-check-iters');
+        if (checkIters !== null) cfg.gs_check_iterations = checkIters;
+        const startCheck = val('cfg-gs-start-checkpoint');
+        if (startCheck !== null) cfg.gs_start_checkpoint = startCheck;
         return cfg;
     }
 

@@ -1,0 +1,1 @@
+Namespace(sh_degree=3, source_path='/teamspace/studios/this_studio/Virtual-Investigation-Tool/jobs/BookFull_b6a9f2fa', model_path='jobs/BookFull_b6a9f2fa/3dgs', images='images', depths='', resolution=-1, white_background=False, train_test_exp=False, data_device='cuda', eval=False)

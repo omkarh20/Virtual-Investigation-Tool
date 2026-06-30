@@ -159,3 +159,47 @@ Still in the `dev/checkpoints` directory, download the SwinT config and model we
 wget -O GroundingDINO_SwinT_OGC.py https://raw.githubusercontent.com/IDEA-Research/GroundingDINO/main/groundingdino/config/GroundingDINO_SwinT_OGC.py 
 wget -nc -O groundingdino_swint_ogc.pth https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
 ```
+
+---
+
+## 5. 3D Gaussian Splatting (3DGS) Setup
+
+The backend utilizes the official Inria 3D Gaussian Splatting repository to generate the point cloud reconstructions.
+
+### Prerequisites
+- **CUDA Toolkit** (installed with PyTorch) and `nvcc`
+- PyTorch must be installed before you build the custom CUDA extensions.
+
+### Installation Steps
+
+1. **Initialize the Submodules:**
+If you haven't already cloned this repository with the `--recursive` flag, you need to initialize the 3DGS submodule. The `--recursive` flag is required because 3DGS relies on its own nested submodules for rasterization and KNN calculations.
+```bash
+git submodule update --init --recursive
+```
+
+2. **Install Python Dependencies:**
+```bash
+pip install plyfile tqdm ninja
+pip install torch torchvision torchaudio
+```
+
+3. **Install the Custom CUDA Extensions:**
+Since the submodules require compilation against your system's CUDA environment, it's recommended to install them using `pip` without build isolation.
+
+*Note: The `diff-gaussian-rasterization` code might throw an error regarding `uint32_t`. If this happens, you will need to add `#include <cstdint>` to `external/gaussian-splatting/submodules/diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h` before running the command below.*
+
+```bash
+# Install the rasterizer
+MAX_JOBS=4 pip install -v ./external/gaussian-splatting/submodules/diff-gaussian-rasterization --no-build-isolation
+
+# Install the KNN library
+pip install -v ./external/gaussian-splatting/submodules/simple-knn --no-build-isolation
+```
+
+### Verification
+To verify that the custom CUDA extensions compiled and installed properly, run:
+```bash
+python -c "import diff_gaussian_rasterization; import simple_knn; print('3DGS dependencies installed successfully!')"
+```
+If it runs without throwing a `ModuleNotFoundError`, you are fully set up.

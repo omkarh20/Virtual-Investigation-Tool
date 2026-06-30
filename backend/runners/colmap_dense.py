@@ -18,7 +18,7 @@ async def run_colmap_dense(job_id: str, job_dir: str, config: dict, push_ws: Cal
     use_gpu = "1" if config.get("colmap_use_gpu", True) else "0"
     max_image_size = str(config.get("colmap_dense_max_image_size", 2000))
     
-    step_id = 3  # Phase 3
+    step_id = 2  # Phase 2 (was Phase 3)
 
     # 1. Image Undistorter
     await push_ws({"type": "log", "step": step_id, "progress": 10, "text": "Starting image undistortion..."})

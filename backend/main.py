@@ -8,8 +8,7 @@ import json
 import re
 from typing import Any
 
-from runners.preprocessor import process_inputs
-from runners.colmap_sparse import run_colmap_sparse
+from runners.colmap_sparse import run_colmap_pipeline
 from runners.colmap_dense import run_colmap_dense
 from runners.train_3dgs import run_3dgs_training
 from vr_exporter import process_vr_export
@@ -103,11 +102,10 @@ async def push(job_id: str, msg: dict) -> None:
             pass
 
 PHASES = [
-    {"id": 1, "label": "Preparing Images",   "runner": process_inputs},
-    {"id": 2, "label": "COLMAP",       "runner": run_colmap_sparse},
-    {"id": 3, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
-    {"id": 4, "label": "3DGS Training",       "runner": run_3dgs_training},
-    {"id": 5, "label": "Segmentation",        "runner": "dummy", "simulated": True},
+    {"id": 1, "label": "COLMAP",              "runner": run_colmap_pipeline},
+    {"id": 2, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
+    {"id": 3, "label": "3DGS Training",       "runner": run_3dgs_training},
+    {"id": 4, "label": "Segmentation",        "runner": "dummy", "simulated": True},
 ]
 
 async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
@@ -129,7 +127,7 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
         if pid in job["completed_phases"]:
             continue
             
-        if phase.get("optional") and pid == 3 and not enable_dense:
+        if phase.get("optional") and pid == 2 and not enable_dense:
             job["completed_phases"].append(pid)
             continue
             
@@ -155,11 +153,6 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                         "text": f"Simulating {phase['label']} (Phase {i + 1}/5)..."
                     })
                 result = {"simulated": True}
-            elif pid == 1:
-                input_dir = make_job_dir(job_id)
-                images_dir = os.path.join(JOBS_DIR, job_id, "images")
-                await process_inputs(job_id, input_dir, images_dir, config, lambda msg: push(job_id, msg))
-                result = {"image_dir": images_dir}
             else:
                 job_dir = os.path.join(JOBS_DIR, job_id)
                 runner_func = phase["runner"]
@@ -184,8 +177,8 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
             
             if should_pause:
                 next_pid = pid + 1
-                if next_pid == 3 and not enable_dense:
-                    next_pid = 4
+                if next_pid == 2 and not enable_dense:
+                    next_pid = 3
                 
                 # Compute next label even for is_end so user can always continue
                 if next_pid <= len(PHASES):
@@ -207,10 +200,10 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
         except asyncio.CancelledError:
             # Clean up partial output for the cancelled phase
             cleanup_dirs = {
-                1: [os.path.join(JOBS_DIR, job_id, "images")],
-                2: [os.path.join(JOBS_DIR, job_id, "colmap")],
-                3: [os.path.join(JOBS_DIR, job_id, "dense")],
-                4: [os.path.join(JOBS_DIR, job_id, "output")],
+                1: [os.path.join(JOBS_DIR, job_id, "images"), os.path.join(JOBS_DIR, job_id, "colmap")],
+                2: [os.path.join(JOBS_DIR, job_id, "dense")],
+                3: [os.path.join(JOBS_DIR, job_id, "3dgs")],
+                4: [os.path.join(JOBS_DIR, job_id, "segmentation")],
             }
             for d in cleanup_dirs.get(pid, []):
                 if os.path.exists(d):
@@ -225,10 +218,10 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
         except Exception as e:
             # Clean up partial output for the failed phase
             cleanup_dirs = {
-                1: [os.path.join(JOBS_DIR, job_id, "images")],
-                2: [os.path.join(JOBS_DIR, job_id, "colmap")],
-                3: [os.path.join(JOBS_DIR, job_id, "dense")],
-                4: [os.path.join(JOBS_DIR, job_id, "output")],
+                1: [os.path.join(JOBS_DIR, job_id, "images"), os.path.join(JOBS_DIR, job_id, "colmap")],
+                2: [os.path.join(JOBS_DIR, job_id, "dense")],
+                3: [os.path.join(JOBS_DIR, job_id, "3dgs")],
+                4: [os.path.join(JOBS_DIR, job_id, "segmentation")],
             }
             for d in cleanup_dirs.get(pid, []):
                 if os.path.exists(d):
@@ -304,8 +297,8 @@ async def run_pipeline(body: dict) -> JSONResponse:
     jobs[job_id]["current_phase"] = start_phase
     save_job_metadata(job_id)
 
-    # If starting at phase 4 (3DGS), we need to extract the uploaded zip containing images & sparse
-    if start_phase == 4:
+    # If starting at phase 3 (3DGS), we need to extract the uploaded zip containing images & sparse
+    if start_phase == 3:
         input_file = jobs[job_id]["input_path"]
         job_dir = os.path.join(JOBS_DIR, job_id)
         if input_file.endswith(".zip"):
