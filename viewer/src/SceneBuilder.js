@@ -332,7 +332,7 @@ export class SceneBuilder {
     setupSelection() {
         window.addEventListener('mousedown', (event) => {
             if (!this.interactionMode) return; // Only select if interaction mode is ON
-            if (event.target.closest('#ui-overlay')) return; // Ignore UI clicks
+            if (event.target && typeof event.target.closest === 'function' && event.target.closest('#ui-overlay')) return; // Ignore UI clicks
             if (this.transformControls.dragging) return; // Ignore if dragging gizmo
             
             this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -400,6 +400,22 @@ export class SceneBuilder {
                 this.enableControls();
             }
         });
+    }
+
+    syncSplatToHitboxWorld(id, worldPos, worldQuat) {
+        const splat = this.segments.get(id);
+        const orig = this.originalPositions.get(id);
+        if (!splat || !orig) return;
+
+        const origQuatInv = orig.hitboxQuat.clone().invert();
+        const deltaQuat = worldQuat.clone().multiply(origQuatInv);
+        
+        splat.quaternion.copy(deltaQuat).multiply(orig.splatQuat);
+
+        const pivotOffset = new THREE.Vector3().subVectors(orig.splat, orig.hitbox);
+        pivotOffset.applyQuaternion(deltaQuat);
+        
+        splat.position.copy(worldPos).add(pivotOffset);
     }
 
     syncSplatsToHitboxes() {
