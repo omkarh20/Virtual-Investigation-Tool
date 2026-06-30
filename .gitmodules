@@ -1,3 +1,4 @@
 [submodule "external/gaussian-splatting"]
 	path = external/gaussian-splatting
 	url = https://github.com/graphdeco-inria/gaussian-splatting
+	ignore = untracked
