@@ -493,7 +493,3 @@ option {
   display: flex;
   align-items: center;
 }
-.project-tree .tree-file::before {
-  content: "📄";
-  margin-right: 6px;
-}

@@ -133,13 +133,17 @@ export function initPipelinePage() {
     function updateUploadHelperForPhase() {
         const phase = parseInt(cfgStartPhase?.value || "1");
         if (phase === 3) {
-            inputHelper.textContent = "(ZIP of COLMAP 'images' & 'sparse', or select natively)";
-            modeVideo.style.display = 'none';
+            if (inputHelper) inputHelper.textContent = "(Provide a COLMAP workspace folder containing 'images' and 'sparse')";
+            if (modeZip) modeZip.innerHTML = '🗜️ ZIP of COLMAP Workspace';
+            if (modeDir) modeDir.innerHTML = '📁 COLMAP Workspace Folder';
+            if (modeVideo) modeVideo.style.display = 'none';
             setActiveMode('zip');
         } else {
-            inputHelper.textContent = "(Video or Images)";
-            modeVideo.style.display = 'inline-block';
-            if (selectedMode === 'video' || modeVideo.style.display === 'none') {
+            if (inputHelper) inputHelper.textContent = "(Video or Images)";
+            if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Images';
+            if (modeDir) modeDir.innerHTML = '📁 Image Folder';
+            if (modeVideo) modeVideo.style.display = 'inline-block';
+            if (selectedMode === 'video' || (modeVideo && modeVideo.style.display === 'none')) {
                 setActiveMode('video');
             }
         }
@@ -784,7 +788,7 @@ export function initPipelinePage() {
             const li = document.createElement('li');
             li.className = 'tree-file';
             const kb = (node.size / 1024).toFixed(1);
-            li.textContent = `${node.name} (${kb} KB)`;
+            li.textContent = `📄 ${node.name} (${kb} KB)`;
             return li;
         } else {
             const li = document.createElement('li');

@@ -16,19 +16,27 @@ async def run_generic_process(cmd: list, push_ws: Callable[[dict], Awaitable[Non
         await push_ws({"type": "log", "step": step, "progress": 100, "text": error_msg})
         raise RuntimeError(error_msg)
 
-    while True:
-        line = await process.stdout.readline()
-        if not line:
-            break
-        text = line.decode().strip()
-        if text:
-            await push_ws({"type": "log", "step": step, "progress": 5, "text": f"[{label}] {text}"})
+    try:
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            text = line.decode().strip()
+            if text:
+                await push_ws({"type": "log", "step": step, "progress": 5, "text": f"[{label}] {text}"})
 
-    await process.wait()
-    if process.returncode != 0:
-        error_msg = f"Command {' '.join(cmd)} failed with exit code {process.returncode}"
-        await push_ws({"type": "log", "step": step, "progress": 100, "text": f"ERROR: {error_msg}"})
-        raise RuntimeError(error_msg)
+        await process.wait()
+        if process.returncode != 0:
+            error_msg = f"Command {' '.join(cmd)} failed with exit code {process.returncode}"
+            await push_ws({"type": "log", "step": step, "progress": 100, "text": f"ERROR: {error_msg}"})
+            raise RuntimeError(error_msg)
+    finally:
+        if process.returncode is None:
+            try:
+                process.terminate()
+                process.kill()
+            except Exception:
+                pass
 
 
 async def run_3dgs_training(job_id: str, job_dir: str, config: dict, push_ws: Callable[[dict], Awaitable[None]]):
@@ -145,41 +153,68 @@ async def run_3dgs_training(job_id: str, job_dir: str, config: dict, push_ws: Ca
         await push_ws({"type": "log", "step": step_id, "progress": 100, "text": error_msg})
         raise RuntimeError(error_msg)
 
-    # 3. Parse output for progress
-    iter_regex = re.compile(r"\[ITER\s+(\d+)\]\s+Loss:\s+([0-9\.]+)")
-    total_iters = int(iterations)
-    
-    while True:
-        line = await process.stdout.readline()
-        if not line:
-            break
-        text = line.decode().strip()
-        if text:
-            # Try to match progress [ITER 1000] Loss: 0.123
-            match = iter_regex.search(text)
-            if match:
-                current_iter = int(match.group(1))
-                loss = match.group(2)
+    try:
+        # 3. Parse output for progress
+        iter_regex = re.compile(r"(\d+)/(\d+).*?Loss=([0-9\.]+)")
+        fallback_regex = re.compile(r"\[ITER\s+(\d+)\]\s+Loss:\s+([0-9\.]+)")
+        total_iters = int(iterations)
+        
+        buf = b""
+        while True:
+            chunk = await process.stdout.read(1024)
+            if not chunk:
+                break
+            buf += chunk
+            
+            while True:
+                r_idx = buf.find(b'\r')
+                n_idx = buf.find(b'\n')
                 
-                # Calculate progress from 10% to 95%
-                pct = 10 + int(85 * (current_iter / total_iters))
-                await push_ws({
-                    "type": "log", 
-                    "step": step_id, 
-                    "progress": pct, 
-                    "text": f"Training Iteration {current_iter}/{total_iters} | Loss: {loss}"
-                })
-            elif "Saving" in text or "Loading" in text or "Exception" in text:
-                await push_ws({"type": "log", "step": step_id, "progress": 50, "text": f"[3DGS] {text}"})
+                if r_idx == -1 and n_idx == -1:
+                    break
+                    
+                if r_idx != -1 and (n_idx == -1 or r_idx < n_idx):
+                    idx = r_idx
+                else:
+                    idx = n_idx
+                    
+                line = buf[:idx].decode('utf-8', errors='replace').strip()
+                buf = buf[idx+1:]
+                
+                if line:
+                    match = iter_regex.search(line)
+                    if not match:
+                        match_fb = fallback_regex.search(line)
+                        if match_fb:
+                            current_iter = int(match_fb.group(1))
+                            loss = match_fb.group(2)
+                            pct = 10 + int(85 * (current_iter / total_iters))
+                            await push_ws({"type": "log", "step": step_id, "progress": pct, "text": f"Training Iteration {current_iter}/{total_iters} | Loss: {loss}"})
+                    else:
+                        current_iter = int(match.group(1))
+                        tot = int(match.group(2))
+                        loss = match.group(3)
+                        pct = 10 + int(85 * (current_iter / tot))
+                        await push_ws({"type": "log", "step": step_id, "progress": pct, "text": f"Training Iteration {current_iter}/{tot} | Loss: {loss}"})
+                    
+                    if "Saving" in line or "Loading" in line or "Exception" in line:
+                        await push_ws({"type": "log", "step": step_id, "progress": 50, "text": f"[3DGS] {line}"})
 
-    await process.wait()
-    if process.returncode != 0:
-        error_msg = f"3DGS training failed with exit code {process.returncode}"
-        await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"ERROR: {error_msg}"})
-        raise RuntimeError(error_msg)
+        await process.wait()
+        if process.returncode != 0:
+            error_msg = f"3DGS training failed with exit code {process.returncode}"
+            await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"ERROR: {error_msg}"})
+            raise RuntimeError(error_msg)
 
-    # Output path
-    final_ply = os.path.join(out_dir, "point_cloud", f"iteration_{iterations}", "point_cloud.ply")
-    await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"3DGS training complete. Saved to {final_ply}"})
-    
-    return {"point_cloud": final_ply}
+        # Output path
+        final_ply = os.path.join(out_dir, "point_cloud", f"iteration_{iterations}", "point_cloud.ply")
+        await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"3DGS training complete. Saved to {final_ply}"})
+        
+        return {"point_cloud": final_ply}
+    finally:
+        if process.returncode is None:
+            try:
+                process.terminate()
+                process.kill()
+            except Exception:
+                pass
