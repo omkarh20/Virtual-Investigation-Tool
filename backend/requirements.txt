@@ -14,3 +14,4 @@ ultralytics
 segment-anything-hq
 timm
 git+https://github.com/openai/CLIP.git
+scipy

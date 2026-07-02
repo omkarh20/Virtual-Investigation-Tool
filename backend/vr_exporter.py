@@ -32,6 +32,17 @@ def process_vr_export(job_id: str, input_ply_path: str, output_dir: str):
     unique_labels = np.unique(labels)
     print(f"[VR Export] Found labels: {unique_labels}")
 
+    # Try to load label_map.json from the same directory as the PLY
+    label_map = {}
+    label_map_path = os.path.join(os.path.dirname(input_ply_path), "label_map.json")
+    if os.path.exists(label_map_path):
+        try:
+            with open(label_map_path, "r") as f:
+                label_map = json.load(f)
+            print(f"[VR Export] Loaded label map: {label_map}")
+        except Exception as e:
+            print(f"[VR Export] WARNING: Failed to read label map: {e}")
+
     manifest = {
         "scene_id": job_id,
         "segments": [],
@@ -59,9 +70,14 @@ def process_vr_export(job_id: str, input_ply_path: str, output_dir: str):
         segment_data = vertex_data[mask]
         
         is_background = (label_val == 0)
-        label_name = "background" if is_background else f"object_{label_val}"
+        if is_background:
+            label_name = "background"
+        else:
+            label_name = label_map.get(str(label_val), f"object_{label_val}")
+            
+        safe_label_name = "".join(x for x in label_name if x.isalnum() or x in "_-").replace(" ", "_")
         
-        ply_filename = f"segment_{label_val}_{label_name}.ply"
+        ply_filename = f"segment_{label_val}_{safe_label_name}.ply"
         glb_filename = f"collision_{label_val}.glb"
         
         ply_path = os.path.join(output_dir, ply_filename)

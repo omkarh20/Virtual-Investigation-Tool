@@ -20,6 +20,7 @@ const STEPS = [
     { id: 2, label: 'COLMAP Dense', optional: true },
     { id: 3, label: '3DGS Training' },
     { id: 4, label: 'Segmentation' },
+    { id: 5, label: 'VR Export' },
 ];
 
 export function initPipelinePage() {
@@ -161,11 +162,29 @@ export function initPipelinePage() {
             if (cfgColmap) cfgColmap.style.display = (phase === 1 || phase === 2) ? 'block' : 'none';
             if (cfg3dgs) cfg3dgs.style.display = (phase === 3) ? 'block' : 'none';
             if (cfgSeg) cfgSeg.style.display = (phase === 4) ? 'block' : 'none';
+            
+            // Phase 5 uses no config sections, just an upload
+            
+            // Dynamic text for Phase 5 upload
+            if (phase === 5) {
+                if (modeVideo) modeVideo.style.display = 'none'; // hide video upload
+                if (selectedMode === 'video') setActiveMode('zip');
+                const helper = document.getElementById('input-helper-text');
+                if (helper) helper.innerText = "(Upload Folder or ZIP containing point_cloud.ply and label_map.json)";
+            } else {
+                if (modeVideo) modeVideo.style.display = 'inline-block';
+                const helper = document.getElementById('input-helper-text');
+                if (helper) helper.innerText = "(Video or Images)";
+            }
         } else {
             if (cfgPrep) cfgPrep.style.display = 'block';
             if (cfgColmap) cfgColmap.style.display = 'block';
             if (cfg3dgs) cfg3dgs.style.display = 'block';
             if (cfgSeg) cfgSeg.style.display = 'block';
+            
+            if (modeVideo) modeVideo.style.display = 'inline-block';
+            const helper = document.getElementById('input-helper-text');
+            if (helper) helper.innerText = "(Video or Images)";
         }
     }
 
@@ -525,14 +544,15 @@ export function initPipelinePage() {
             updateStepProgress(msg.step, msg.progress);
             appendLog(msg.text);
         } else if (msg.type === 'phase_complete') {
+            completedPhases.push(msg.phase);
             markStep(msg.phase, 'done', 100);
-            appendLog(`✓ ${msg.label} complete.`, false, true);
-            if (phaseSummary) phaseSummary.innerHTML = `<strong>${msg.label} finished.</strong>`;
-            if (!completedPhases.includes(msg.phase)) {
-                completedPhases.push(msg.phase);
-            }
             renderResultsPanel();
             fetchAndRenderTree();
+            
+            // If Phase 5 completes, point the renderer to its manifest
+            if (msg.phase === 5) {
+                sessionStorage.setItem('vit_manifest_url', `${BACKEND_URL}/jobs/${currentJobId}/vr-assets/manifest.json`);
+            }
         } else if (msg.type === 'phase_paused') {
             if (cancelArea) cancelArea.style.display = 'none';
             if (msg.next_phase === null) {

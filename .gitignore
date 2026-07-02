@@ -7,6 +7,7 @@ data
 *.mov
 *.jpg
 *.png
+*.glb
 
 # AI Model Weights
 *.pt

@@ -102,12 +102,14 @@ async def push(job_id: str, msg: dict) -> None:
             pass
 
 from runners.run_segmentation import run_segmentation
+from runners.run_vr_export import run_vr_export
 
 PHASES = [
     {"id": 1, "label": "COLMAP",              "runner": run_colmap_pipeline},
     {"id": 2, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
     {"id": 3, "label": "3DGS Training",       "runner": run_3dgs_training},
     {"id": 4, "label": "Segmentation",        "runner": run_segmentation},
+    {"id": 5, "label": "VR Export",           "runner": run_vr_export},
 ]
 
 async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
@@ -206,6 +208,7 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                 2: [os.path.join(JOBS_DIR, job_id, "dense")],
                 3: [os.path.join(JOBS_DIR, job_id, "3dgs")],
                 4: [os.path.join(JOBS_DIR, job_id, "segmentation")],
+                5: [os.path.join(JOBS_DIR, job_id, "vr-assets")],
             }
             for d in cleanup_dirs.get(pid, []):
                 if os.path.exists(d):
@@ -224,6 +227,7 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                 2: [os.path.join(JOBS_DIR, job_id, "dense")],
                 3: [os.path.join(JOBS_DIR, job_id, "3dgs")],
                 4: [os.path.join(JOBS_DIR, job_id, "segmentation")],
+                5: [os.path.join(JOBS_DIR, job_id, "vr-assets")],
             }
             for d in cleanup_dirs.get(pid, []):
                 if os.path.exists(d):
@@ -299,8 +303,8 @@ async def run_pipeline(body: dict) -> JSONResponse:
     jobs[job_id]["current_phase"] = start_phase
     save_job_metadata(job_id)
 
-    # If starting at phase 3 (3DGS) or 4 (Segmentation), we need to extract the uploaded zip
-    if start_phase in (3, 4):
+    # If starting at phase 3 (3DGS) or 4 (Segmentation) or 5 (VR Export), we need to extract the uploaded zip
+    if start_phase in (3, 4, 5):
         input_file = jobs[job_id]["input_path"]
         job_dir = os.path.join(JOBS_DIR, job_id)
         if input_file.endswith(".zip"):
