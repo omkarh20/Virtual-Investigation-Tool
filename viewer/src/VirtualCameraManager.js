@@ -1436,14 +1436,7 @@ export class VirtualCameraManager {
         let optimalDistance = Math.max(distV, distH) * 1.1; // 10% padding
         optimalDistance = Math.max(0.5, Math.min(optimalDistance, 10.0));
 
-        // Clear existing POIs
-        this.pois.forEach(poi => {
-            this.scene.remove(poi);
-            poi.geometry.dispose();
-            poi.material.dispose();
-        });
-        this.pois = [];
-
+        // Add the new POI without clearing existing ones
         this.createPOI(centroid);
 
         const poi = this.pois[this.pois.length - 1];
