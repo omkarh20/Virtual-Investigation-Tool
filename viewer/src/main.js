@@ -265,7 +265,7 @@ function initRenderer() {
         }
         
         // VR controller step
-        vrManager.update();
+        vrManager.update(delta);
 
         // Pause main render while VirtualCameraManager is exporting
         if (!vcManager.isExporting) {

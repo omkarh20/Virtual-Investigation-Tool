@@ -42,7 +42,7 @@ export class SceneBuilder {
         if (statusEl) statusEl.innerText = `Loading ${file.name}...`;
 
         const url = URL.createObjectURL(file);
-        const splat = new SplatMesh({ url: url });
+        const splat = new SplatMesh({ url: url, raycastable: true });
         splat.quaternion.set(1, 0, 0, 0);
 
         splat.userData = {
@@ -113,7 +113,7 @@ export class SceneBuilder {
 
     // ── Splat Segment Loading ───────────────────────────────────────────────
     async loadSplatSegment(segment, url) {
-        const splat = new SplatMesh({ url: url });
+        const splat = new SplatMesh({ url: url, raycastable: true });
         splat.quaternion.set(1, 0, 0, 0);
 
         splat.userData = {

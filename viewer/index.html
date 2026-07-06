@@ -345,6 +345,11 @@
       </div>
       <div id="tooltip" class="tooltip hidden">Segment Name</div>
     </div>
+    
+    <!-- Box Segment Overlay -->
+    <div id="box-segment-overlay" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; cursor: crosshair;">
+      <div id="box-segment-rect" style="display: none; position: absolute; border: 2px dashed #8b5cf6; background: rgba(139, 92, 246, 0.2); pointer-events: none;"></div>
+    </div>
 
     <!-- Virtual Camera Panel -->
     <div id="vc-panel" class="glass-panel"
@@ -388,6 +393,9 @@
 
       <button id="vc-segment-this-btn" class="primary-btn"
         style="background-color: #10b981; margin-bottom: 8px;">Segment This View</button>
+
+      <button id="vc-box-segment-btn" class="primary-btn"
+        style="background-color: #8b5cf6; margin-bottom: 8px;">Drag Box to Segment</button>
 
       <button id="vc-clear-btn" class="primary-btn" style="background-color: #ef4444; margin-bottom: 8px;">Clear All
         POIs</button>
