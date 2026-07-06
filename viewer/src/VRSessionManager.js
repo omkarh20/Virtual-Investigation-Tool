@@ -13,6 +13,11 @@ export class VRSessionManager {
         this.physicsManager = physicsManager;
         this.sceneBuilder = sceneBuilder;
         
+        // 0. Create a Dolly (Rig) to hold the camera and controllers for movement
+        this.dolly = new THREE.Group();
+        this.scene.add(this.dolly);
+        this.dolly.add(this.camera);
+        
         // 1. Enable XR in Three.js
         this.renderer.xr.enabled = true;
         
@@ -49,12 +54,12 @@ export class VRSessionManager {
             controller.addEventListener('selectstart', (e) => this.onSelectStart(e));
             controller.addEventListener('selectend', (e) => this.onSelectEnd(e));
             
-            this.scene.add(controller);
+            this.dolly.add(controller);
             
             // Get the visual 3D model of the controller (Quest 3 controllers will load automatically!)
             const controllerGrip = this.renderer.xr.getControllerGrip(i);
             controllerGrip.add(controllerModelFactory.createControllerModel(controllerGrip));
-            this.scene.add(controllerGrip);
+            this.dolly.add(controllerGrip);
             
             // Add a laser pointer line extending from the controller
             // We use a BufferGeometry where we can dynamically update the end point
@@ -98,6 +103,10 @@ export class VRSessionManager {
             'toggle-interaction-btn',
             'toggle-physics-btn',
             'toggle-vc-btn',
+            'vc-segment-this-btn',
+            'vc-export-btn',
+            'vc-place-mode-btn',
+            'vc-clear-btn',
             'toggle-gizmo-mode-btn',
             'reset-object-btn',
             'reset-scene-btn',
@@ -272,9 +281,11 @@ export class VRSessionManager {
         // trigger a few UI repaints by slightly toggling the padding. This perfectly mimics a button
         // click and forces the browser to "wake up" and render the texture in its proper orientation.
         this.renderer.xr.addEventListener('sessionstart', () => {
-            // Show the menu once we are actually in VR
-            this.vrMenuMesh.visible = true;
+            // Keep the menu hidden by default
+            this.vrMenuMesh.visible = false;
             
+            // We still run the wake-up interval in the background just to force HTMLMesh 
+            // to process the DOM early so it's fully ready when the user summons it!
             let count = 0;
             const wakeUpInterval = setInterval(() => {
                 if (count > 5) {
@@ -351,8 +362,78 @@ export class VRSessionManager {
         }
     }
     
-    update() {
-        // Dynamically adjust laser pointer length so it doesn't go through the UI panel
+    update(delta) {
+        // --- 1. HEAD-DIRECTED FLYING LOCOMOTION (Left Joystick) & VERTICAL HOVER (Right Joystick) ---
+        const session = this.renderer.xr.getSession();
+        if (session && delta) {
+            for (const source of session.inputSources) {
+                if (source.gamepad) {
+                    const axes = source.gamepad.axes;
+                    const buttons = source.gamepad.buttons;
+                    const xAxis = axes.length > 2 ? axes[2] : axes[0];
+                    const yAxis = axes.length > 2 ? axes[3] : axes[1];
+                    const speed = 2.5 * delta;
+
+                    if (source.handedness === 'left') {
+                        // Check X Button to summon menu (Button 4 in WebXR Standard for Quest X button)
+                        const xButtonPressed = buttons.length > 4 && buttons[4].pressed;
+                        if (xButtonPressed && !this.prevButtonX) {
+                            // Toggle menu visibility
+                            this.vrMenuMesh.visible = !this.vrMenuMesh.visible;
+                            
+                            if (this.vrMenuMesh.visible) {
+                                // Summon menu 1.2m in front of current gaze
+                                const xrCamera = this.renderer.xr.getCamera(this.camera);
+                                const headsetPos = new THREE.Vector3();
+                                const headsetQuat = new THREE.Quaternion();
+                                xrCamera.getWorldPosition(headsetPos);
+                                xrCamera.getWorldQuaternion(headsetQuat);
+                                
+                                // Get the exact 3D gaze direction (including pitch/tilt)
+                                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(headsetQuat);
+                                
+                                // Spawn exactly 1.2m away in that exact direction
+                                this.vrMenuMesh.position.copy(headsetPos).addScaledVector(forward, 1.2);
+                                
+                                // Make the menu tilt perfectly to face the headset
+                                this.vrMenuMesh.lookAt(headsetPos);
+                                
+                                // Force a quick repaint to prevent the quest inversion bug on first summon
+                                if (this.vrMenuMesh.element) {
+                                    this.vrMenuMesh.element.style.padding = '21px';
+                                    setTimeout(() => { if (this.vrMenuMesh.element) this.vrMenuMesh.element.style.padding = '20px'; }, 100);
+                                }
+                            }
+                        }
+                        this.prevButtonX = xButtonPressed;
+
+                        // Deadzone to prevent drift
+                        if (Math.abs(xAxis) > 0.1 || Math.abs(yAxis) > 0.1) {
+                            // Extract exact world rotation of the active VR headset camera
+                            const xrCamera = this.renderer.xr.getCamera(this.camera);
+                            const headsetQuat = new THREE.Quaternion();
+                            xrCamera.getWorldQuaternion(headsetQuat);
+
+                            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(headsetQuat);
+                            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(headsetQuat);
+                            
+                            // Move the dolly along these global vectors (flying)
+                            this.dolly.position.addScaledVector(forward, -yAxis * speed);
+                            this.dolly.position.addScaledVector(right, xAxis * speed);
+                        }
+                    } else if (source.handedness === 'right') {
+                        // Deadzone to prevent drift
+                        if (Math.abs(yAxis) > 0.1) {
+                            // Vertical hover (Global Y-axis only)
+                            // Pushing forward (-Y axis on thumbstick) moves UP
+                            this.dolly.position.y += -yAxis * speed;
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 2. DYNAMIC LASER POINTER LENGTH ---
         if (this.controllers && this.interactiveGroup && this.interactiveGroup.children.length > 0) {
             this.controllers.forEach(controller => {
                 const laserLine = controller.userData.laserLine;

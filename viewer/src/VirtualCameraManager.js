@@ -23,6 +23,9 @@ export class VirtualCameraManager {
         this.pendingSegmentRay = null;
         this.pendingRayLine = null;
 
+        this.boxSegmentMode = false;
+        this.boxStartPos = { x: 0, y: 0 };
+
         this.setupUI();
         this.setupInteractions();
     }
@@ -39,6 +42,10 @@ export class VirtualCameraManager {
         this.exportBtn = document.getElementById('vc-export-btn');
         this.submitPipelineBtn = document.getElementById('vc-submit-pipeline-btn');
         this.statusText = document.getElementById('vc-status');
+
+        this.boxSegmentBtn = document.getElementById('vc-box-segment-btn');
+        this.boxOverlay = document.getElementById('box-segment-overlay');
+        this.boxRect = document.getElementById('box-segment-rect');
 
         if (!this.vcToggleBtn) return;
 
@@ -105,6 +112,66 @@ export class VirtualCameraManager {
         this.segmentThisBtn = document.getElementById('vc-segment-this-btn');
         if (this.segmentThisBtn) {
             this.segmentThisBtn.addEventListener('click', () => this.autoSegmentCurrentView());
+        }
+
+        if (this.boxSegmentBtn) {
+            this.boxSegmentBtn.addEventListener('click', () => {
+                this.boxSegmentMode = !this.boxSegmentMode;
+                this.boxSegmentBtn.style.backgroundColor = this.boxSegmentMode ? '#6d28d9' : '#8b5cf6';
+                this.boxSegmentBtn.innerText = this.boxSegmentMode ? 'Cancel Drag Box' : 'Drag Box to Segment';
+                if (this.boxOverlay) this.boxOverlay.style.display = this.boxSegmentMode ? 'block' : 'none';
+            });
+        }
+
+        if (this.boxOverlay) {
+            this.boxOverlay.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0) return; // Only left click
+                this.boxStartPos = { x: e.clientX, y: e.clientY };
+                this.boxRect.style.left = `${this.boxStartPos.x}px`;
+                this.boxRect.style.top = `${this.boxStartPos.y}px`;
+                this.boxRect.style.width = '0px';
+                this.boxRect.style.height = '0px';
+                this.boxRect.style.display = 'block';
+                this.boxOverlay.setPointerCapture(e.pointerId);
+            });
+            
+            this.boxOverlay.addEventListener('pointermove', (e) => {
+                if (this.boxRect.style.display === 'block') {
+                    const currentX = e.clientX;
+                    const currentY = e.clientY;
+                    const width = Math.abs(currentX - this.boxStartPos.x);
+                    const height = Math.abs(currentY - this.boxStartPos.y);
+                    this.boxRect.style.width = `${width}px`;
+                    this.boxRect.style.height = `${height}px`;
+                    this.boxRect.style.left = `${Math.min(currentX, this.boxStartPos.x)}px`;
+                    this.boxRect.style.top = `${Math.min(currentY, this.boxStartPos.y)}px`;
+                }
+            });
+            
+            this.boxOverlay.addEventListener('pointerup', (e) => {
+                if (this.boxRect.style.display === 'block') {
+                    this.boxRect.style.display = 'none';
+                    this.boxOverlay.releasePointerCapture(e.pointerId);
+                    
+                    const endX = e.clientX;
+                    const endY = e.clientY;
+                    
+                    const minX = Math.min(this.boxStartPos.x, endX);
+                    const minY = Math.min(this.boxStartPos.y, endY);
+                    const width = Math.abs(endX - this.boxStartPos.x);
+                    const height = Math.abs(endY - this.boxStartPos.y);
+                    
+                    if (width > 10 && height > 10) {
+                        this.handleBoxSegment(minX, minY, width, height);
+                    }
+                    
+                    // Exit mode
+                    this.boxSegmentMode = false;
+                    this.boxSegmentBtn.style.backgroundColor = '#8b5cf6';
+                    this.boxSegmentBtn.innerText = 'Drag Box to Segment';
+                    this.boxOverlay.style.display = 'none';
+                }
+            });
         }
     }
 
@@ -1198,61 +1265,92 @@ export class VirtualCameraManager {
             const bestObj = data.detections[0];
             console.log("Detected object:", bestObj);
 
-            // Calculate 3D centroid
-            const ndcX = (bestObj.center_x / width) * 2 - 1;
-            const ndcY = -(bestObj.center_y / height) * 2 + 1;
-            
-            this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), exportCam);
-            
-            if (!this.pendingSegmentRay) {
-                // First click: store the ray and draw a preview line
-                this.pendingSegmentRay = this.raycaster.ray.clone();
-                
-                const points = [
-                    this.pendingSegmentRay.origin,
-                    this.pendingSegmentRay.origin.clone().add(this.pendingSegmentRay.direction.clone().multiplyScalar(20))
-                ];
-                const geometry = new THREE.BufferGeometry().setFromPoints(points);
-                const material = new THREE.LineDashedMaterial({ color: 0x00ff00, dashSize: 0.5, gapSize: 0.2 });
-                this.pendingRayLine = new THREE.Line(geometry, material);
-                this.pendingRayLine.computeLineDistances();
-                this.scene.add(this.pendingRayLine);
-                
-                this.statusText.innerText = `Captured angle 1 for ${bestObj.class}. Move camera and click Segment again.`;
+            // Use the detection bbox to cast a grid of rays for 3D centroid
+            const [bboxX1, bboxY1, bboxX2, bboxY2] = bestObj.bbox;
+            const bboxWidth = bboxX2 - bboxX1;
+            const bboxHeight = bboxY2 - bboxY1;
+
+            const gridSize = 5; // 5x5 = 25 sample rays
+            const hitPoints = [];
+
+            // Collect all SplatMesh objects in the scene
+            const splatMeshes = [];
+            this.scene.traverse(child => {
+                if (child.raycast && (child.constructor?.name === 'SplatMesh' || child.raycastable === true)) {
+                    splatMeshes.push(child);
+                }
+            });
+
+            // Cast rays through the detection bbox (coords are in rendered image space)
+            for (let row = 0; row < gridSize; row++) {
+                for (let col = 0; col < gridSize; col++) {
+                    const sampleX = bboxX1 + (col + 0.5) * (bboxWidth / gridSize);
+                    const sampleY = bboxY1 + (row + 0.5) * (bboxHeight / gridSize);
+
+                    // Convert from image pixel coords to NDC using rendered image dimensions
+                    const ndcX = (sampleX / width) * 2 - 1;
+                    const ndcY = -(sampleY / height) * 2 + 1;
+
+                    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+
+                    const intersects = [];
+                    for (const splat of splatMeshes) {
+                        splat.raycast(this.raycaster, intersects);
+                    }
+
+                    if (intersects.length > 0) {
+                        intersects.sort((a, b) => a.distance - b.distance);
+                        hitPoints.push(intersects[0].point.clone());
+                    }
+                }
+            }
+
+            if (hitPoints.length === 0) {
+                this.statusText.innerText = `Detected ${bestObj.class} but no 3D splat hits in bbox.`;
                 return;
             }
-            
-            // Second click: intersect rays
-            const intersectPoint = this.calculateRayIntersection(this.pendingSegmentRay, this.raycaster.ray);
-            
-            // Clean up pending state
+
+            // Clean up any pending segmentation state from old flow
             this.cancelPendingSegmentation();
-            
-            const distanceToObj = exportCam.position.distanceTo(intersectPoint);
-            
-            // Calculate optimal standoff distance
-            // We want the object to occupy ~70% of the screen width
-            const targetWidthPx = width * 0.7;
-            const bbWidthPx = bestObj.width;
-            
-            // new_dist = current_dist * (current_px / target_px)
-            let optimalDistance = distanceToObj * (bbWidthPx / targetWidthPx);
-            
-            // Clamp to reasonable values
+
+            // Compute 3D centroid as average of all hit points
+            const centroid = new THREE.Vector3();
+            hitPoints.forEach(p => centroid.add(p));
+            centroid.divideScalar(hitPoints.length);
+
+            // Compute bounding sphere radius from hit points around centroid
+            let boundRadius = 0;
+            hitPoints.forEach(p => {
+                const dist = centroid.distanceTo(p);
+                if (dist > boundRadius) boundRadius = dist;
+            });
+            // Safety margin for unseen backside of the object
+            boundRadius *= 1.3;
+
+            // Min distance to fit entire object in frame (export camera = 60° vFOV)
+            const EXPORT_FOV_DEG = 60;
+            const vFOV = (EXPORT_FOV_DEG * Math.PI) / 180;
+            const aspect = window.innerWidth / window.innerHeight;
+            const hFOV = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
+            const distV = boundRadius / Math.sin(vFOV / 2);
+            const distH = boundRadius / Math.sin(hFOV / 2);
+            let optimalDistance = Math.max(distV, distH) * 1.1; // 10% padding
             optimalDistance = Math.max(0.5, Math.min(optimalDistance, 10.0));
-            
             // Add the new POI without clearing existing ones
-            
-            this.createPOI(intersectPoint);
-            
+            this.createPOI(centroid);
+
+            const poi = this.pois[this.pois.length - 1];
+            poi.userData.standoff = optimalDistance;
+
             // Update UI
             if (this.standoffInput) {
                 this.standoffInput.value = optimalDistance.toFixed(1);
                 if (this.standoffValText) this.standoffValText.innerText = `${optimalDistance.toFixed(1)} units`;
             }
-            
+
+            this.updatePoiList();
             this.updatePreview();
-            this.statusText.innerText = `Found ${bestObj.class}! Auto-set camera radius to ${optimalDistance.toFixed(1)}.`;
+            this.statusText.innerText = `Found ${bestObj.class}! 3D centroid from ${hitPoints.length} hits. Radius: ${optimalDistance.toFixed(1)}.`;
             
         } catch (err) {
             console.error(err);
@@ -1260,5 +1358,99 @@ export class VirtualCameraManager {
         } finally {
             this.segmentThisBtn.disabled = false;
         }
+    }
+
+    handleBoxSegment(x, y, boxWidthPx, boxHeightPx) {
+        // Cast a grid of rays through the drag box to find 3D hit points on splats
+        const gridSize = 5; // 5x5 = 25 sample rays
+        const hitPoints = [];
+
+        // Collect all SplatMesh objects in the scene
+        const splatMeshes = [];
+        this.scene.traverse(child => {
+            if (child.raycast && (child.constructor?.name === 'SplatMesh' || child.raycastable === true)) {
+                splatMeshes.push(child);
+            }
+        });
+
+        for (let row = 0; row < gridSize; row++) {
+            for (let col = 0; col < gridSize; col++) {
+                const sampleX = x + (col + 0.5) * (boxWidthPx / gridSize);
+                const sampleY = y + (row + 0.5) * (boxHeightPx / gridSize);
+
+                const ndcX = (sampleX / window.innerWidth) * 2 - 1;
+                const ndcY = -(sampleY / window.innerHeight) * 2 + 1;
+
+                this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+
+                const intersects = [];
+                for (const splat of splatMeshes) {
+                    splat.raycast(this.raycaster, intersects);
+                }
+
+                if (intersects.length > 0) {
+                    intersects.sort((a, b) => a.distance - b.distance);
+                    hitPoints.push(intersects[0].point.clone());
+                }
+            }
+        }
+
+        // Fallback to ground plane if no splat hits
+        if (hitPoints.length === 0) {
+            const centerX = x + boxWidthPx / 2;
+            const centerY = y + boxHeightPx / 2;
+            const ndcX = (centerX / window.innerWidth) * 2 - 1;
+            const ndcY = -(centerY / window.innerHeight) * 2 + 1;
+
+            this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+            const fallbackPoint = new THREE.Vector3();
+            if (this.raycaster.ray.intersectPlane(this.groundPlane, fallbackPoint)) {
+                hitPoints.push(fallbackPoint);
+            } else {
+                this.statusText.innerText = "Error: No splat hits and box center missed ground plane.";
+                return;
+            }
+        }
+
+        // Compute 3D centroid as average of all hit points
+        const centroid = new THREE.Vector3();
+        hitPoints.forEach(p => centroid.add(p));
+        centroid.divideScalar(hitPoints.length);
+
+        // Compute bounding sphere radius from hit points around centroid
+        let boundRadius = 0;
+        hitPoints.forEach(p => {
+            const dist = centroid.distanceTo(p);
+            if (dist > boundRadius) boundRadius = dist;
+        });
+        // Safety margin for unseen backside of the object
+        boundRadius *= 1.3;
+
+        // Min distance to fit entire object in frame (export camera = 60° vFOV)
+        const EXPORT_FOV_DEG = 60;
+        const vFOV = (EXPORT_FOV_DEG * Math.PI) / 180;
+        const aspect = window.innerWidth / window.innerHeight;
+        const hFOV = 2 * Math.atan(Math.tan(vFOV / 2) * aspect);
+        const distV = boundRadius / Math.sin(vFOV / 2);
+        const distH = boundRadius / Math.sin(hFOV / 2);
+        let optimalDistance = Math.max(distV, distH) * 1.1; // 10% padding
+        optimalDistance = Math.max(0.5, Math.min(optimalDistance, 10.0));
+
+        // Clear existing POIs
+        this.pois.forEach(poi => {
+            this.scene.remove(poi);
+            poi.geometry.dispose();
+            poi.material.dispose();
+        });
+        this.pois = [];
+
+        this.createPOI(centroid);
+
+        const poi = this.pois[this.pois.length - 1];
+        poi.userData.standoff = optimalDistance;
+
+        this.updatePoiList();
+        this.updatePreview();
+        this.statusText.innerText = `3D centroid from ${hitPoints.length} ray hits. Camera radius: ${optimalDistance.toFixed(1)}.`;
     }
 }
