@@ -331,6 +331,12 @@ option {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.glass-panel::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Edge */
 }
 
 .scene-title {
@@ -338,6 +344,49 @@ option {
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--text-main);
+}
+
+.menu-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menu-card-title {
+  margin: 0 0 4px 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.btn-group-row {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-group-row .primary-btn {
+  margin-bottom: 0 !important;
+}
+
+.half-btn {
+  flex: 1;
+}
+
+.third-btn {
+  flex: 1;
+  padding: 8px 4px !important;
+  font-size: 0.8rem;
+}
+
+.primary-btn.active {
+  background-color: var(--primary) !important;
+  border-color: var(--primary-light) !important;
 }
 
 .scene-status {
@@ -378,9 +427,9 @@ option {
 }
 
 .primary-btn {
-  background-color: var(--primary);
+  background-color: rgba(255, 255, 255, 0.1);
   color: white;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 12px;
   font-size: 0.875rem;
@@ -390,16 +439,36 @@ option {
   font-family: inherit;
 }
 
-.primary-btn:hover:not(:disabled) {
-  background-color: var(--primary-hover);
-  transform: translateY(-1px);
+.primary-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.primary-btn:active {
+  transform: translateY(1px);
 }
 
 .primary-btn:disabled {
-  background-color: rgba(99, 102, 241, 0.5);
+  opacity: 0.5;
   cursor: not-allowed;
-  opacity: 0.7;
+  pointer-events: none;
 }
+
+/* Color Modifiers for buttons */
+.btn-purple { background-color: rgba(139, 92, 246, 0.6) !important; border-color: rgba(139, 92, 246, 0.8) !important; }
+.btn-purple:hover { background-color: rgba(139, 92, 246, 0.8) !important; }
+
+.btn-amber { background-color: rgba(245, 158, 11, 0.6) !important; border-color: rgba(245, 158, 11, 0.8) !important; }
+.btn-amber:hover { background-color: rgba(245, 158, 11, 0.8) !important; }
+
+.btn-blue { background-color: rgba(59, 130, 246, 0.6) !important; border-color: rgba(59, 130, 246, 0.8) !important; }
+.btn-blue:hover { background-color: rgba(59, 130, 246, 0.8) !important; }
+
+.btn-green { background-color: rgba(16, 185, 129, 0.6) !important; border-color: rgba(16, 185, 129, 0.8) !important; }
+.btn-green:hover { background-color: rgba(16, 185, 129, 0.8) !important; }
+
+.btn-red { background-color: rgba(239, 68, 68, 0.6) !important; border-color: rgba(239, 68, 68, 0.8) !important; }
+.btn-red:hover { background-color: rgba(239, 68, 68, 0.8) !important; }
 
 .tooltip {
   position: absolute;

@@ -23,7 +23,7 @@ export class FPSControls {
 
         // Internal state
         this._euler = new THREE.Euler(0, 0, 0, 'YXZ');
-        this._moveState = { forward: 0, back: 0, left: 0, right: 0, up: 0, down: 0 };
+        this._moveState = { forward: 0, back: 0, left: 0, right: 0, up: 0, down: 0, boost: 0 };
         this._moveVector = new THREE.Vector3();
         this._isDragging = false;
 
@@ -49,7 +49,7 @@ export class FPSControls {
     update(delta) {
         if (!this.enabled) return;
 
-        const speed = this.movementSpeed * delta;
+        const speed = this.movementSpeed * delta * (this._moveState.boost ? 2.0 : 1.0);
 
         // Update movement vector from key state
         this._moveVector.set(
@@ -74,11 +74,11 @@ export class FPSControls {
             case 'KeyD': this._moveState.right = 1; break;
             case 'KeyR': this._moveState.up = 1; break;
             case 'KeyF': this._moveState.down = 1; break;
+            case 'Space': this._moveState.boost = 1; break;
         }
     }
 
     _handleKeyUp(event) {
-        if (!this.enabled) return;
 
         switch (event.code) {
             case 'KeyW': this._moveState.forward = 0; break;
@@ -87,11 +87,12 @@ export class FPSControls {
             case 'KeyD': this._moveState.right = 0; break;
             case 'KeyR': this._moveState.up = 0; break;
             case 'KeyF': this._moveState.down = 0; break;
+            case 'Space': this._moveState.boost = 0; break;
         }
     }
 
     _handleBlur() {
-        this._moveState = { forward: 0, back: 0, left: 0, right: 0, up: 0, down: 0 };
+        this._moveState = { forward: 0, back: 0, left: 0, right: 0, up: 0, down: 0, boost: 0 };
         this._isDragging = false;
     }
 
@@ -123,7 +124,6 @@ export class FPSControls {
     }
 
     _handlePointerUp(event) {
-        if (!this.enabled) return;
 
         if (event.button === 2) {
             this._isDragging = false;

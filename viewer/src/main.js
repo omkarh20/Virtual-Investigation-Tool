@@ -68,20 +68,23 @@ function initRenderer() {
 
     let activeControls = orbitControls;
 
-    const toggleCameraBtn = document.getElementById('toggle-camera-btn');
-    if (toggleCameraBtn) {
-        toggleCameraBtn.addEventListener('click', () => {
-            if (activeControls === orbitControls) {
-                orbitControls.enabled = false;
-                fpsControls.enabled = true;
-                activeControls = fpsControls;
-                toggleCameraBtn.innerText = 'Camera: Fly (WASD + Right-drag)';
-            } else {
-                fpsControls.enabled = false;
-                orbitControls.enabled = true;
-                activeControls = orbitControls;
-                toggleCameraBtn.innerText = 'Camera: Orbit';
-            }
+    const orbitBtn = document.getElementById('toggle-camera-btn');
+    const flyBtn = document.getElementById('toggle-fly-camera-btn');
+    
+    if (orbitBtn && flyBtn) {
+        orbitBtn.addEventListener('click', () => {
+            fpsControls.enabled = false;
+            orbitControls.enabled = true;
+            activeControls = orbitControls;
+            orbitBtn.classList.add('active');
+            flyBtn.classList.remove('active');
+        });
+        flyBtn.addEventListener('click', () => {
+            orbitControls.enabled = false;
+            fpsControls.enabled = true;
+            activeControls = fpsControls;
+            flyBtn.classList.add('active');
+            orbitBtn.classList.remove('active');
         });
     }
 
@@ -116,7 +119,22 @@ function initRenderer() {
     // 7. Scene Builder & Physics
     const physicsManager = new PhysicsManager();
     const sceneBuilder = new SceneBuilder(scene, camera, transformControls, disableControls, enableControls, physicsManager);
-    sceneBuilder.loadFromManifest();
+    
+    window.addEventListener('route:renderer', (e) => {
+        const alignMatch = e.detail.hash.match(/\?align=([^&]+)/);
+        const vcamMatch = e.detail.hash.match(/\?vcam=([^&]+)/);
+        if (alignMatch) {
+            const jobId = alignMatch[1];
+            sceneBuilder.loadPointCloudForAlignment(jobId);
+        } else if (vcamMatch) {
+            const jobId = vcamMatch[1];
+            sceneBuilder.loadSplatForVcam(jobId);
+            vcManager.enterVcamSubmitMode(jobId);
+        } else if (!sceneBuilder.alignmentJobId) {
+            // Only load manifest if we didn't just align something
+            sceneBuilder.loadFromManifest();
+        }
+    });
 
     // 8. Virtual Camera Manager
     const vcManager = new VirtualCameraManager(scene, camera, renderer, transformControls, orbitControls);
@@ -207,7 +225,11 @@ function initRenderer() {
         togglePhysicsBtn.addEventListener('click', () => {
             window.physicsEnabled = !window.physicsEnabled;
             togglePhysicsBtn.innerText = `Physics: ${window.physicsEnabled ? 'ON' : 'OFF'}`;
-            togglePhysicsBtn.style.backgroundColor = window.physicsEnabled ? '#2563eb' : '#4b5563';
+            if (window.physicsEnabled) {
+                togglePhysicsBtn.classList.add('active');
+            } else {
+                togglePhysicsBtn.classList.remove('active');
+            }
 
             if (window.physicsEnabled && physicsManager) {
                 // Wake up all bodies so they start falling!

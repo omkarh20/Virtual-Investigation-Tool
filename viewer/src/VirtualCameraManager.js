@@ -37,6 +37,7 @@ export class VirtualCameraManager {
         this.previewToggle = document.getElementById('vc-preview');
         this.clearBtn = document.getElementById('vc-clear-btn');
         this.exportBtn = document.getElementById('vc-export-btn');
+        this.submitPipelineBtn = document.getElementById('vc-submit-pipeline-btn');
         this.statusText = document.getElementById('vc-status');
 
         if (!this.vcToggleBtn) return;
@@ -65,16 +66,13 @@ export class VirtualCameraManager {
         });
 
         this.clearBtn.addEventListener('click', () => {
-            this.pois.forEach(poi => {
-                this.scene.remove(poi);
-                poi.geometry.dispose();
-                poi.material.dispose();
-            });
-            this.pois = [];
-            this.transformControls.detach();
-            this.cancelPendingSegmentation();
-            this.updatePoiList();
-            this.updatePreview();
+            this.clearAllPOIs();
+        });
+
+        window.addEventListener('scene-cleared', () => {
+            if (this.pois && this.pois.length > 0) {
+                this.clearAllPOIs();
+            }
         });
 
         this.previewToggle.addEventListener('change', () => {
@@ -102,11 +100,21 @@ export class VirtualCameraManager {
             });
         }
 
-        this.exportBtn.addEventListener('click', () => this.exportCameras());
+        if (this.exportBtn) this.exportBtn.addEventListener('click', () => this.exportCameras());
 
         this.segmentThisBtn = document.getElementById('vc-segment-this-btn');
         if (this.segmentThisBtn) {
             this.segmentThisBtn.addEventListener('click', () => this.autoSegmentCurrentView());
+        }
+    }
+
+    enterVcamSubmitMode(jobId) {
+        if (this.submitPipelineBtn) {
+            this.submitPipelineBtn.style.display = 'block';
+            this.submitPipelineBtn.onclick = () => this.submitToPipeline(jobId);
+        }
+        if (!this.active && this.vcToggleBtn) {
+            this.vcToggleBtn.click();
         }
     }
 
@@ -337,6 +345,42 @@ export class VirtualCameraManager {
                 countContainer.appendChild(countInputBox);
                 sliderContainer.appendChild(countContainer);
 
+                // --- Object(s) Input ---
+                const objContainer = document.createElement('div');
+                objContainer.style.display = 'flex';
+                objContainer.style.justifyContent = 'space-between';
+                objContainer.style.alignItems = 'center';
+                objContainer.style.fontSize = '0.75rem';
+                objContainer.style.color = '#cbd5e1';
+                objContainer.style.marginTop = '8px';
+                
+                const objLabel = document.createElement('span');
+                objLabel.innerText = 'Object(s):';
+                
+                const objInputBox = document.createElement('input');
+                objInputBox.type = 'text';
+                objInputBox.placeholder = 'e.g. knife, shoe';
+                objInputBox.value = poi.userData.objects || '';
+                objInputBox.style.width = '100px';
+                objInputBox.style.backgroundColor = 'rgba(0,0,0,0.3)';
+                objInputBox.style.border = '1px solid #4b5563';
+                objInputBox.style.color = 'white';
+                objInputBox.style.padding = '2px 4px';
+                objInputBox.style.borderRadius = '3px';
+
+                objInputBox.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    poi.userData.objects = objInputBox.value;
+                });
+                
+                objInputBox.addEventListener('mousedown', (e) => e.stopPropagation());
+                objInputBox.addEventListener('click', (e) => e.stopPropagation());
+                objInputBox.addEventListener('keydown', (e) => e.stopPropagation());
+
+                objContainer.appendChild(objLabel);
+                objContainer.appendChild(objInputBox);
+                sliderContainer.appendChild(objContainer);
+
                 // --- Preview Frustums Checkbox ---
                 const previewContainer = document.createElement('div');
                 previewContainer.style.display = 'flex';
@@ -388,6 +432,19 @@ export class VirtualCameraManager {
         this.pois.forEach(p => newTotal += p.userData.cameraCount);
         this.countInput.value = newTotal;
         
+        this.updatePoiList();
+        this.updatePreview();
+    }
+
+    clearAllPOIs() {
+        this.pois.forEach(poi => {
+            this.scene.remove(poi);
+            poi.geometry.dispose();
+            poi.material.dispose();
+        });
+        this.pois = [];
+        this.transformControls.detach();
+        this.cancelPendingSegmentation();
         this.updatePoiList();
         this.updatePreview();
     }
@@ -479,16 +536,11 @@ export class VirtualCameraManager {
             }
         });
         
-        // Update list coordinates and camera target when drag finishes
+        // Update list coordinates when drag finishes
         this.transformControls.addEventListener('dragging-changed', (event) => {
             if (!event.value) {
                 if (this.active && !this.isExporting) {
                     this.updatePoiList();
-                    const activePoi = this.transformControls.object;
-                    if (activePoi && this.orbitControls) {
-                        this.orbitControls.target.copy(activePoi.position);
-                        this.orbitControls.update();
-                    }
                 }
             }
         });
@@ -624,9 +676,16 @@ export class VirtualCameraManager {
                 
                 if (count > 0) {
                     const positions = this.generateSphereBandFibonacci(poi.position, radius, count, 5, 75);
+                    const objStr = poi.userData.objects || "auto";
                     
                     positions.forEach(pos => {
-                        cameras.push({ position: pos, target: poi.position.clone(), tier: 'poi', poi: poi });
+                        cameras.push({ 
+                            position: pos, 
+                            target: poi.position.clone(), 
+                            tier: 'poi', 
+                            poi: poi,
+                            objects: objStr
+                        });
                     });
                 }
             }
@@ -909,6 +968,144 @@ export class VirtualCameraManager {
 
             this.isExporting = false;
             this.exportBtn.disabled = false;
+            if (this.submitPipelineBtn) this.submitPipelineBtn.disabled = false;
+        }
+    }
+
+    async submitToPipeline(jobId) {
+        if (this.pois.length === 0) {
+            alert("Please place at least one Point of Interest (click on the ground) before submitting.");
+            return;
+        }
+
+        this.isExporting = true;
+        this.exportBtn.disabled = true;
+        if (this.submitPipelineBtn) this.submitPipelineBtn.disabled = true;
+        this.statusText.innerText = "Initializing virtual cameras...";
+
+        let zip = new JSZip();
+        let zipImages = zip.folder("images");
+
+        const [width, height] = this.resSelect.value.split('x').map(Number);
+        const cameras = this.buildVirtualCameraList();
+        const total = cameras.length;
+
+        const renderTarget = new THREE.WebGLRenderTarget(width, height, {
+            format: THREE.RGBAFormat,
+            type: THREE.UnsignedByteType
+        });
+
+        this.transformControls.detach();
+        this.pois.forEach(p => p.visible = false);
+        this.previewLines.forEach(l => l.visible = false);
+
+        const originalBg = this.scene.background;
+        this.scene.background = new THREE.Color(0xffffff);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(width, height);
+
+        const cameraEntries = [];
+        const exportCam = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
+
+        try {
+            for (let i = 0; i < total; i++) {
+                this.statusText.innerText = `Rendering ${i + 1} / ${total}...`;
+                const vc = cameras[i];
+
+                exportCam.position.copy(vc.position);
+                exportCam.lookAt(vc.target);
+                exportCam.updateMatrixWorld();
+
+                this.renderer.setRenderTarget(renderTarget);
+                this.renderer.render(this.scene, exportCam);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                this.renderer.render(this.scene, exportCam);
+
+                const buffer = new Uint8Array(width * height * 4);
+                this.renderer.readRenderTargetPixels(renderTarget, 0, 0, width, height, buffer);
+
+                const rawImgData = new ImageData(new Uint8ClampedArray(buffer), width, height);
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                tempCanvas.getContext('2d').putImageData(rawImgData, 0, 0);
+
+                ctx.fillStyle = "white";
+                ctx.fillRect(0, 0, width, height);
+                ctx.save();
+                ctx.translate(0, height);
+                ctx.scale(1, -1);
+                ctx.drawImage(tempCanvas, 0, 0);
+                ctx.restore();
+
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                const imgName = `${String(i).padStart(5, '0')}.png`;
+
+                const fovRad = (60 * Math.PI) / 180;
+                const fy = (height / 2) / Math.tan(fovRad / 2);
+                const fx = fy;
+                const vm = exportCam.matrixWorldInverse.elements;
+                const rotation = [
+                    [vm[0], -vm[1], -vm[2]],
+                    [-vm[4], vm[5], vm[6]],
+                    [-vm[8], vm[9], vm[10]]
+                ];
+
+                const objList = vc.objects.split(',').map(s => s.trim()).filter(s => s.length > 0);
+                if (objList.length === 0) objList.push("auto");
+
+                for (const obj_name of objList) {
+                    const cleanObjName = obj_name.replace(/[^a-zA-Z0-9_-]/g, "_");
+                    zipImages.folder(cleanObjName).file(imgName, blob);
+
+                    cameraEntries.push({
+                        id: `${i}_${cleanObjName}`,
+                        img_name: `${cleanObjName}/${imgName}`,
+                        width: width,
+                        height: height,
+                        position: [exportCam.position.x, -exportCam.position.y, -exportCam.position.z],
+                        rotation: rotation,
+                        fx: fx,
+                        fy: fy
+                    });
+                }
+            }
+
+            this.statusText.innerText = "Zipping and uploading to pipeline...";
+            const jsonStr = JSON.stringify(cameraEntries, null, 2);
+            zip.file("cameras.json", jsonStr);
+
+            const zipBlob = await zip.generateAsync({ type: "blob" });
+            const formData = new FormData();
+            formData.append('job_id', jobId);
+            formData.append('file', zipBlob, 'virtual_cameras.zip');
+
+            const res = await fetch(`http://${window.location.hostname}:8000/submit-vcam`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (res.ok) {
+                this.statusText.innerText = "Submitted successfully!";
+                window.location.hash = `#/pipeline/${jobId}`;
+            } else {
+                throw new Error("Failed to submit to backend.");
+            }
+        } catch (err) {
+            console.error(err);
+            this.statusText.innerText = `Error: ${err.message}`;
+        } finally {
+            this.renderer.setRenderTarget(null);
+            this.scene.background = originalBg;
+            this.pois.forEach(p => p.visible = true);
+            this.updatePreview();
+            this.isExporting = false;
+            this.exportBtn.disabled = false;
+            if (this.submitPipelineBtn) this.submitPipelineBtn.disabled = false;
         }
     }
 
@@ -1044,13 +1241,7 @@ export class VirtualCameraManager {
             // Clamp to reasonable values
             optimalDistance = Math.max(0.5, Math.min(optimalDistance, 10.0));
             
-            // Clear existing POIs and add the new one
-            this.pois.forEach(poi => {
-                this.scene.remove(poi);
-                poi.geometry.dispose();
-                poi.material.dispose();
-            });
-            this.pois = [];
+            // Add the new POI without clearing existing ones
             
             this.createPOI(intersectPoint);
             

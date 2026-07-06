@@ -46,6 +46,23 @@ export function initPipelinePage() {
     const modeToggle      = document.getElementById('pipeline-mode-toggle');
     const modeFullBtn     = document.getElementById('mode-full-btn');
     const modeAdvBtn      = document.getElementById('mode-advanced-btn');
+    
+    const segModeAuto = document.getElementById('seg-mode-auto');
+    const segModeVcam = document.getElementById('seg-mode-vcam');
+
+    if (segModeAuto && segModeVcam) {
+        segModeAuto.addEventListener('click', () => {
+            segModeAuto.classList.add('active-mode');
+            segModeVcam.classList.remove('active-mode');
+            updateUploadHelperForPhase();
+        });
+        segModeVcam.addEventListener('click', () => {
+            segModeVcam.classList.add('active-mode');
+            segModeAuto.classList.remove('active-mode');
+            updateUploadHelperForPhase();
+        });
+    }
+
     const advancedConfig  = document.getElementById('advanced-config-section');
     const cfgStartPhase   = document.getElementById('cfg-start-phase');
     const inputHelper     = document.getElementById('input-helper-text');
@@ -133,58 +150,89 @@ export function initPipelinePage() {
 
     function updateUploadHelperForPhase() {
         const phase = parseInt(cfgStartPhase?.value || "1");
+        
+        // Disable Custom Objects input if VCam mode is selected
+        const segModeVcamBtn = document.getElementById('seg-mode-vcam');
+        const isVcam = segModeVcamBtn && segModeVcamBtn.classList.contains('active-mode');
+        const segObjectsInput = document.getElementById('cfg-seg-objects');
+        if (segObjectsInput) {
+            segObjectsInput.disabled = isVcam;
+            segObjectsInput.style.opacity = isVcam ? '0.3' : '1.0';
+            if (isVcam) {
+                segObjectsInput.placeholder = "Set per-camera in Renderer";
+                segObjectsInput.value = "";
+            } else {
+                segObjectsInput.placeholder = "e.g. knife, bottle, shoe";
+            }
+        }
+        
+        const groupZipLabel = document.querySelector('#group-zip label');
+        const groupDirLabel = document.querySelector('#group-dir label');
+
         if (phase === 3) {
-            if (inputHelper) inputHelper.textContent = "(Provide a COLMAP workspace folder containing 'images' and 'sparse')";
+            if (inputHelper) inputHelper.textContent = "(COLMAP Workspace)";
             if (modeZip) modeZip.innerHTML = '🗜️ ZIP of COLMAP Workspace';
             if (modeDir) modeDir.innerHTML = '📁 COLMAP Workspace Folder';
+            if (groupZipLabel) groupZipLabel.textContent = "Select a ZIP archive containing 'images' and 'sparse' folders";
+            if (groupDirLabel) groupDirLabel.textContent = "Select a folder containing 'images' and 'sparse' folders";
             if (modeVideo) modeVideo.style.display = 'none';
+            if (modeDir) modeDir.style.display = 'inline-block';
             setActiveMode('zip');
         } else if (phase === 4) {
-            if (inputHelper) inputHelper.textContent = "(Provide a ZIP containing 'images/', 'point_cloud.ply', and 'cameras.json')";
-            if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Segmentation Input';
-            if (modeDir) modeDir.innerHTML = '📁 Segmentation Input Folder';
+            if (isVcam) {
+                if (inputHelper) inputHelper.textContent = "(PLY File)";
+                if (modeZip) modeZip.innerHTML = '📁 PLY File or ZIP';
+                if (groupZipLabel) groupZipLabel.textContent = "Select a .ply file directly, or a ZIP containing 'point_cloud.ply'";
+                if (modeDir) modeDir.style.display = 'none';
+            } else {
+                if (inputHelper) inputHelper.textContent = "(3DGS Output + Images)";
+                if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Segmentation Input';
+                if (modeDir) modeDir.innerHTML = '📁 Segmentation Input Folder';
+                if (modeDir) modeDir.style.display = 'inline-block';
+                if (groupZipLabel) groupZipLabel.textContent = "Select a ZIP containing 'images/' folder, 'point_cloud.ply', and 'cameras.json'";
+                if (groupDirLabel) groupDirLabel.textContent = "Select a folder containing 'images/' folder, 'point_cloud.ply', and 'cameras.json'";
+            }
             if (modeVideo) modeVideo.style.display = 'none';
+            setActiveMode('zip');
+        } else if (phase === 5) {
+            if (inputHelper) inputHelper.textContent = "(Provide a ZIP or Folder containing 'point_cloud.ply' and 'label_map.json')";
+            if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Segmentation Output';
+            if (modeDir) modeDir.innerHTML = '📁 Segmentation Output Folder';
+            if (groupZipLabel) groupZipLabel.textContent = "Select a ZIP containing 'point_cloud.ply' and 'label_map.json'";
+            if (groupDirLabel) groupDirLabel.textContent = "Select a folder containing 'point_cloud.ply' and 'label_map.json'";
+            if (modeVideo) modeVideo.style.display = 'none';
+            if (modeDir) modeDir.style.display = 'inline-block';
             setActiveMode('zip');
         } else {
             if (inputHelper) inputHelper.textContent = "(Video or Images)";
             if (modeZip) modeZip.innerHTML = '🗜️ ZIP of Images';
             if (modeDir) modeDir.innerHTML = '📁 Image Folder';
+            if (groupZipLabel) groupZipLabel.textContent = "Select a ZIP archive of images";
+            if (groupDirLabel) groupDirLabel.textContent = "Select an image folder";
             if (modeVideo) modeVideo.style.display = 'inline-block';
+            if (modeDir) modeDir.style.display = 'inline-block';
             if (selectedMode === 'video' || (modeVideo && modeVideo.style.display === 'none')) {
                 setActiveMode('video');
             }
         }
-
         const cfgSeg = document.getElementById('cfg-section-seg');
-
+        const cfgVrexport = document.getElementById('cfg-section-vrexport');
+        
         if (isAdvancedMode) {
             if (cfgPrep) cfgPrep.style.display = (phase === 1) ? 'block' : 'none';
             if (cfgColmap) cfgColmap.style.display = (phase === 1 || phase === 2) ? 'block' : 'none';
             if (cfg3dgs) cfg3dgs.style.display = (phase === 3) ? 'block' : 'none';
             if (cfgSeg) cfgSeg.style.display = (phase === 4) ? 'block' : 'none';
+            if (cfgVrexport) cfgVrexport.style.display = (phase === 5) ? 'block' : 'none';
             
-            // Phase 5 uses no config sections, just an upload
-            
-            // Dynamic text for Phase 5 upload
-            if (phase === 5) {
-                if (modeVideo) modeVideo.style.display = 'none'; // hide video upload
-                if (selectedMode === 'video') setActiveMode('zip');
-                const helper = document.getElementById('input-helper-text');
-                if (helper) helper.innerText = "(Upload Folder or ZIP containing point_cloud.ply and label_map.json)";
-            } else {
-                if (modeVideo) modeVideo.style.display = 'inline-block';
-                const helper = document.getElementById('input-helper-text');
-                if (helper) helper.innerText = "(Video or Images)";
-            }
+            // Dynamic text logic handled in phase switch above
         } else {
             if (cfgPrep) cfgPrep.style.display = 'block';
             if (cfgColmap) cfgColmap.style.display = 'block';
             if (cfg3dgs) cfg3dgs.style.display = 'block';
             if (cfgSeg) cfgSeg.style.display = 'block';
-            
-            if (modeVideo) modeVideo.style.display = 'inline-block';
-            const helper = document.getElementById('input-helper-text');
-            if (helper) helper.innerText = "(Video or Images)";
+            if (cfgVrexport) cfgVrexport.style.display = 'block';
+            if (cfgVrexport) cfgVrexport.style.display = 'block';
         }
     }
 
@@ -244,7 +292,13 @@ export function initPipelinePage() {
     });
 
     if (viewBtn) viewBtn.addEventListener('click', () => {
-        router.goRenderer();
+        if (currentJobId && nextPhaseLabel && nextPhaseLabel.textContent.includes('Align in Renderer')) {
+            window.location.hash = `#/renderer?align=${currentJobId}`;
+        } else if (currentJobId && nextPhaseLabel && nextPhaseLabel.textContent.includes('Virtual Camera')) {
+            window.location.hash = `#/renderer?vcam=${currentJobId}`;
+        } else {
+            router.goRenderer();
+        }
     });
 
     // Toggle Dense visibility in UI
@@ -305,6 +359,11 @@ export function initPipelinePage() {
             const job = await res.json();
             
             completedPhases = job.completed_phases || [];
+            
+            if (completedPhases.includes(5)) {
+                sessionStorage.setItem('vit_manifest_url', `${BACKEND_URL}/jobs/${jobId}/vr-assets/manifest.json`);
+            }
+            
             renderResultsPanel();
             fetchAndRenderTree();
 
@@ -361,7 +420,8 @@ export function initPipelinePage() {
             gs_start_checkpoint: document.getElementById('cfg-gs-start-checkpoint')?.value || "",
             seg_custom_objects: document.getElementById('cfg-seg-objects')?.value || "",
             seg_vote_ratio: parseFloat(document.getElementById('cfg-seg-vote-ratio')?.value) || 0.5,
-            seg_mode: "auto",
+            seg_mode: document.getElementById('seg-mode-vcam')?.classList.contains('active-mode') ? 'vcam' : 'auto',
+            vr_manual_align: document.getElementById('cfg-vr-manual-align')?.checked ?? false,
         };
     }
 
@@ -380,11 +440,11 @@ export function initPipelinePage() {
                 const path = f.webkitRelativePath || f.name;
                 zip.file(path, f);
             }
-            if (uploadStatus) uploadStatus.textContent = 'Compressing images (0%)...';
+            if (uploadStatus) uploadStatus.textContent = 'Zipping files (0%)...';
             const zipBlob = await zip.generateAsync({ type: 'blob' }, (meta) => {
-                if (uploadStatus) uploadStatus.textContent = `Compressing images (${Math.round(meta.percent)}%)...`;
+                if (uploadStatus) uploadStatus.textContent = `Zipping files (${Math.round(meta.percent)}%)...`;
             });
-            filename = (projectName?.value.trim() || 'project') + '_images.zip';
+            filename = (projectName?.value.trim() || 'project') + '_upload.zip';
             fileToUpload = new File([zipBlob], filename, { type: 'application/zip' });
         } else {
             fileToUpload = selectedFile;
@@ -452,7 +512,7 @@ export function initPipelinePage() {
         const config = getPreviewConfigData();
         
         // Reconnect websocket so we can hear updates from the newly started task
-        startWatching(currentJobId);
+        startWatching(currentJobId, 'running');
 
         try {
             const res = await fetch(`${BACKEND_URL}/continue-pipeline`, {
@@ -559,11 +619,29 @@ export function initPipelinePage() {
                 // Truly no next phase — pipeline will reach done on continue
                 if (nextPhaseLabel) nextPhaseLabel.textContent = 'Finish';
                 if (phaseConfigPreview) phaseConfigPreview.innerHTML = '';
-                if (phaseControl) phaseControl.style.display = 'flex';
+                if (!isReplay || isAlreadyFinished) {
+                    if (phaseControl) phaseControl.style.display = 'flex';
+                }
             } else {
                 if (nextPhaseLabel) nextPhaseLabel.textContent = msg.next_label || 'Next Phase';
                 populatePhaseConfigPreview(msg.next_phase);
-                if (phaseControl) phaseControl.style.display = 'flex';
+                if (!isReplay || isAlreadyFinished) {
+                    if (phaseControl) phaseControl.style.display = 'flex';
+                }
+            }
+            
+            if (msg.next_phase === 5 && msg.next_label && msg.next_label.includes('Align in Renderer')) {
+                if (viewBtn) viewBtn.disabled = false;
+                if (continueBtn) continueBtn.style.display = 'none';
+                if (phaseSummary) phaseSummary.innerHTML = `<strong style="color:#60a5fa">Paused for Alignment.</strong> Please click the "View in Renderer" button below to align your scene.`;
+            } else if (msg.next_phase === 4 && msg.next_label && msg.next_label.includes('Virtual Camera')) {
+                if (viewBtn) viewBtn.disabled = false;
+                if (continueBtn) continueBtn.style.display = 'none';
+                if (phaseSummary) phaseSummary.innerHTML = `<strong style="color:#60a5fa">Paused for Virtual Cameras.</strong> Please click the "View in Renderer" button below to place your cameras.`;
+            } else {
+                if (continueBtn) continueBtn.style.display = 'inline-block';
+                if (phaseSummary) phaseSummary.innerHTML = '';
+                if (viewBtn) viewBtn.disabled = true;
             }
         } else if (msg.type === 'cancelled') {
             markStep(msg.phase, 'error', 0);
@@ -595,12 +673,12 @@ export function initPipelinePage() {
     }
 
     // ── Phase Config Preview ───────────────────────────────────────────────────
-    // Map of which config section IDs to show for each phase
     const PHASE_CONFIG_SECTIONS = {
         1: ['cfg-section-prep', 'cfg-section-colmap'],
         2: ['cfg-section-colmap'],
         3: ['cfg-section-3dgs'],
         4: ['cfg-section-seg'],
+        5: ['cfg-section-vrexport'],
     };
 
     function populatePhaseConfigPreview(nextPhase) {
@@ -636,7 +714,33 @@ export function initPipelinePage() {
             clone.style.display = 'block'; // Ensure it's visible even if the original was hidden
             wrapper.appendChild(clone);
         });
+        
+        // Add the wrapper first so it's in the DOM
         phaseConfigPreview.appendChild(wrapper);
+        
+        // Dynamically update UI if they toggle the manual align checkbox while paused
+        const previewAlignBox = phaseConfigPreview.querySelector('#preview-cfg-vr-manual-align');
+        if (previewAlignBox && nextPhase === 5) {
+            previewAlignBox.addEventListener('change', (e) => {
+                const isChecked = e.target.checked;
+                const viewBtn = document.getElementById('pipeline-view-btn');
+                const continueBtn = document.getElementById('phase-continue-btn');
+                const phaseSummary = document.getElementById('phase-summary');
+                const nextPhaseLabel = document.getElementById('next-phase-label');
+                
+                if (isChecked) {
+                    if (viewBtn) viewBtn.disabled = false;
+                    if (continueBtn) continueBtn.style.display = 'none';
+                    if (phaseSummary) phaseSummary.innerHTML = `<strong style="color:#60a5fa">Paused for Alignment.</strong> Please click the "View in Renderer" button below to align your scene.`;
+                    if (nextPhaseLabel) nextPhaseLabel.textContent = 'VR Export (Align in Renderer)';
+                } else {
+                    if (viewBtn) viewBtn.disabled = true;
+                    if (continueBtn) continueBtn.style.display = 'inline-block';
+                    if (phaseSummary) phaseSummary.innerHTML = '';
+                    if (nextPhaseLabel) nextPhaseLabel.textContent = 'VR Export';
+                }
+            });
+        }
     }
 
     function getPreviewConfigData() {
@@ -678,7 +782,10 @@ export function initPipelinePage() {
         if (segObjects !== null) cfg.seg_custom_objects = segObjects;
         const segVoteRatio = val('cfg-seg-vote-ratio');
         if (segVoteRatio !== null) cfg.seg_vote_ratio = parseFloat(segVoteRatio) || 0.5;
-        cfg.seg_mode = "auto";
+        cfg.seg_mode = currentSegMode;
+        
+        const manualAlign = val('cfg-vr-manual-align');
+        if (manualAlign !== null) cfg.vr_manual_align = manualAlign;
         
         return cfg;
     }
@@ -743,6 +850,7 @@ export function initPipelinePage() {
 
     // ── Step UI helpers ────────────────────────────────────────────────────────
     function resetSteps() {
+        if (phaseSummary) phaseSummary.innerHTML = '';
         STEPS.forEach(s => {
             const row = document.getElementById(`step-row-${s.id}`);
             if (!row) return;

@@ -8,6 +8,10 @@ import json
 import re
 from typing import Any
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module=".*tiny_vit_sam.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="segment_anything.*")
+
 from runners.colmap_sparse import run_colmap_pipeline
 from runners.colmap_dense import run_colmap_dense
 from runners.train_3dgs import run_3dgs_training
@@ -159,6 +163,20 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                 result = {"simulated": True}
             else:
                 job_dir = os.path.join(JOBS_DIR, job_id)
+                
+                # If entering Phase 4 in VCam mode, ensure VCam inputs exist. Otherwise pause and wait for them.
+                if pid == 4 and config.get("seg_mode") == "vcam":
+                    vcam_dir = os.path.join(job_dir, "segmentation", "vcam_input")
+                    if not os.path.exists(vcam_dir):
+                        job["status"] = "paused"
+                        save_job_metadata(job_id)
+                        await push(job_id, {
+                            "type": "phase_paused",
+                            "next_phase": 4,
+                            "next_label": "Segmentation (Virtual Camera)"
+                        })
+                        return
+                        
                 runner_func = phase["runner"]
                 result = await runner_func(job_id, job_dir, config, lambda msg: push(job_id, msg))
                 
@@ -179,6 +197,12 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
             is_end = end_phase is not None and pid == end_phase
             should_pause = is_end or (job["run_mode"] == "step" and pid < len(PHASES))
             
+            if pid == 3 and config.get("seg_mode") == "vcam":
+                should_pause = True
+            
+            if pid == 4 and config.get("vr_manual_align"):
+                should_pause = True
+            
             if should_pause:
                 next_pid = pid + 1
                 if next_pid == 2 and not enable_dense:
@@ -188,6 +212,10 @@ async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
                 if next_pid <= len(PHASES):
                     next_label = PHASES[next_pid - 1]["label"]
                     next_phase_out = next_pid
+                    if pid == 3 and config.get("seg_mode") == "vcam":
+                        next_label = "Segmentation (Virtual Camera)"
+                    elif pid == 4 and config.get("vr_manual_align"):
+                        next_label = "VR Export (Align in Renderer)"
                 else:
                     next_label = None
                     next_phase_out = None
@@ -270,6 +298,7 @@ async def upload(file: UploadFile = File(...), project_name: str = Form(None)) -
 
     jobs[job_id] = {
         "status": "uploaded",
+        "project_name": project_name,
         "filename": file.filename,
         "input_path": dest,
         "config": {},
@@ -313,6 +342,11 @@ async def run_pipeline(body: dict) -> JSONResponse:
                     zip_ref.extractall(job_dir)
             except Exception as e:
                 return JSONResponse({"error": f"Failed to extract zip for phase {start_phase}: {e}"}, status_code=400)
+        elif input_file.endswith(".ply"):
+            try:
+                os.rename(input_file, os.path.join(job_dir, "point_cloud.ply"))
+            except Exception as e:
+                return JSONResponse({"error": f"Failed to move PLY file for phase {start_phase}: {e}"}, status_code=400)
 
     if job_id not in progress_queues:
         progress_queues[job_id] = asyncio.Queue()
@@ -361,6 +395,158 @@ async def continue_pipeline(body: dict) -> JSONResponse:
     task.add_done_callback(lambda t: job_tasks.pop(job_id, None))
     return JSONResponse({"status": "resumed", "job_id": job_id})
 
+@app.post("/submit-edits")
+async def submit_edits(body: dict) -> JSONResponse:
+    job_id = body.get("job_id")
+    matrix = body.get("transform_matrix")
+    world_matrix = body.get("world_matrix")
+    deletions = body.get("deletions", [])
+    preview = body.get("preview", False)
+    
+    if not job_id or job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+        
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    job = jobs[job_id]
+    
+    try:
+        from runners.run_edits import apply_edits_to_ply
+        
+        # If we paused after Phase 3 (we are at Phase 4), we edit point_cloud.ply
+        # If we paused after Phase 4 (we are at Phase 5), we edit labelled_point_cloud.ply
+        if job["current_phase"] <= 3:
+            ply_path = os.path.join(job_dir, "point_cloud.ply")
+        else:
+            ply_path = os.path.join(job_dir, "segmentation", "labelled_point_cloud.ply")
+            
+        if os.path.exists(ply_path):
+            # Run ply operations in thread to not block event loop
+            await asyncio.to_thread(apply_edits_to_ply, ply_path, matrix, deletions, world_matrix)
+            
+            # Record that this job has been manually aligned so Phase 5 doesn't auto-align
+            if matrix:
+                job["config"]["aligned"] = True
+                save_job_metadata(job_id)
+                
+    except Exception as e:
+        print(f"Error applying edits: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+        
+    if preview:
+        return JSONResponse({"status": "preview_applied", "job_id": job_id})
+        
+    jobs[job_id]["status"] = "running"
+    save_job_metadata(job_id)
+
+    if job_id not in progress_queues:
+        progress_queues[job_id] = asyncio.Queue()
+
+    task = asyncio.create_task(run_pipeline_orchestrator(job_id))
+    active_tasks.add(task)
+    task.add_done_callback(active_tasks.discard)
+    job_tasks[job_id] = task
+    task.add_done_callback(lambda t: job_tasks.pop(job_id, None))
+    return JSONResponse({"status": "resumed", "job_id": job_id})
+
+@app.post("/export-local")
+async def export_local(
+    file: UploadFile = File(...),
+    transform_matrix: str = Form(...),
+    world_matrix: str = Form(None),
+    deletions: str = Form(...)
+):
+    import tempfile
+    from runners.run_edits import apply_edits_to_ply
+    
+    try:
+        matrix = json.loads(transform_matrix)
+        del_regions = json.loads(deletions)
+        
+        # Save uploaded file to a temporary location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ply") as tmp:
+            tmp_path = tmp.name
+            content = await file.read()
+            tmp.write(content)
+            
+        # Apply edits
+        w_matrix = json.loads(world_matrix) if world_matrix else None
+        await asyncio.to_thread(apply_edits_to_ply, tmp_path, matrix, del_regions, w_matrix)
+        
+        # We can't delete the file immediately because FileResponse returns it asynchronously.
+        # But we can use BackgroundTasks in FastAPI to delete it after sending, 
+        # or we just rely on OS tempfile cleanup. We'll rely on temp folder here or starlette BackgroundTask.
+        from starlette.background import BackgroundTask
+        return FileResponse(
+            path=tmp_path, 
+            filename=f"edited_{file.filename}", 
+            media_type="application/octet-stream",
+            background=BackgroundTask(os.remove, tmp_path)
+        )
+    except Exception as e:
+        print(f"Error in export_local: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/submit-vcam")
+async def submit_vcam(job_id: str = Form(...), file: UploadFile = File(...)):
+    if job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+        
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    vcam_dir = os.path.join(job_dir, "segmentation", "vcam_input")
+    os.makedirs(vcam_dir, exist_ok=True)
+    
+    zip_path = os.path.join(vcam_dir, "virtual_cameras.zip")
+    with open(zip_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+        
+    shutil.unpack_archive(zip_path, vcam_dir)
+    os.remove(zip_path)
+    
+    # Resume the pipeline at Phase 4
+    asyncio.create_task(run_pipeline_orchestrator(job_id, end_phase=4))
+    
+    return JSONResponse({"status": "resumed", "job_id": job_id})
+
+
+@app.get("/download/{job_id}/splat")
+async def download_splat(job_id: str):
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    dgs_dir = os.path.join(job_dir, "3dgs")
+    point_cloud_dir = os.path.join(dgs_dir, "point_cloud")
+    ply_path = None
+    if os.path.exists(point_cloud_dir):
+        iters = []
+        for d in os.listdir(point_cloud_dir):
+            if d.startswith("iteration_"):
+                try:
+                    iters.append(int(d.split("_")[1]))
+                except:
+                    pass
+        if iters:
+            highest_iter = max(iters)
+            ply_path = os.path.join(point_cloud_dir, f"iteration_{highest_iter}", "point_cloud.ply")
+            
+    if not ply_path or not os.path.exists(ply_path):
+        ply_path = os.path.join(job_dir, "point_cloud.ply")
+        if not os.path.exists(ply_path):
+            return JSONResponse({"error": "No splat found"}, status_code=404)
+            
+    return FileResponse(ply_path, media_type="application/octet-stream", filename="point_cloud.ply")
+
+@app.get("/download/{job_id}/segmentation-zip")
+async def download_segmentation_zip(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+        
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    seg_dir = os.path.join(job_dir, "segmentation")
+    if not os.path.exists(seg_dir):
+        return JSONResponse({"error": "No segmentation output found"}, status_code=404)
+        
+    zip_path = os.path.join(job_dir, "segmentation_results.zip")
+    shutil.make_archive(zip_path[:-4], 'zip', seg_dir)
+    return FileResponse(zip_path, media_type="application/zip", filename="segmentation_results.zip")
 
 @app.get("/download/{job_id}/{phase_id}")
 async def download_phase(job_id: str, phase_id: int):
@@ -405,21 +591,6 @@ async def download_phase(job_id: str, phase_id: int):
         return FileResponse(ply_path, media_type="application/octet-stream", filename="labelled_point_cloud.ply")
         
     return JSONResponse({"error": "Download not supported for this phase"}, status_code=400)
-
-@app.get("/download/{job_id}/segmentation-zip")
-async def download_segmentation_zip(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
-        
-    job_dir = os.path.join(JOBS_DIR, job_id)
-    seg_dir = os.path.join(job_dir, "segmentation")
-    if not os.path.exists(seg_dir):
-        return JSONResponse({"error": "No segmentation output found"}, status_code=404)
-        
-    zip_path = os.path.join(job_dir, "segmentation_results.zip")
-    shutil.make_archive(zip_path[:-4], 'zip', seg_dir)
-    return FileResponse(zip_path, media_type="application/zip", filename="segmentation_results.zip")
 
 
 @app.websocket("/progress/{job_id}")

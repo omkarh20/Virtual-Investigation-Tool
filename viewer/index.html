@@ -8,6 +8,27 @@
   <meta name="description"
     content="Virtual Investigation Tool — 3D Gaussian Splat scene viewer and segmentation pipeline." />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    .rect-select-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 50;
+    }
+    .rect-select-svg.active {
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+    .rect-select-box {
+      fill: rgba(239, 68, 68, 0.2);
+      stroke: #ef4444;
+      stroke-width: 2px;
+      stroke-dasharray: 4;
+    }
+  </style>
 </head>
 
 <body>
@@ -96,7 +117,7 @@
           </div>
           <div id="group-zip" class="upload-input-group" style="display:none">
             <label>Select a ZIP archive of images and sparse folders</label>
-            <input type="file" id="input-zip" accept=".zip" />
+            <input type="file" id="input-zip" accept=".zip,.ply" />
           </div>
           <div id="group-dir" class="upload-input-group" style="display:none">
             <label>Select an image folder</label>
@@ -222,10 +243,9 @@
               <button class="mode-tab active-mode" id="seg-mode-auto">
                 🔍 Auto-Segment (Easy)
               </button>
-              <button class="mode-tab" id="seg-mode-vcam" disabled 
-                style="opacity: 0.4; cursor: not-allowed;"
-                title="Coming soon: Use virtual cameras for precision segmentation">
-                📸 Virtual Camera (Advanced) — Coming Soon
+              <button class="mode-tab" id="seg-mode-vcam" 
+                title="Use virtual cameras for precision segmentation">
+                📸 Virtual Camera (Advanced)
               </button>
             </div>
           </div>
@@ -242,6 +262,15 @@
             <input type="range" id="cfg-seg-vote-ratio" min="0.1" max="0.8" step="0.05" value="0.5"
               style="width: 100%;">
             <small style="color:#6b7280;">Current: <span id="seg-vote-ratio-display">0.5</span> (higher = fewer artifacts, stricter)</small>
+          </div>
+        </div>
+
+        <div class="config-section" id="cfg-section-vrexport">
+          <h3>VR Export (Phase 5)</h3>
+          <div class="config-field">
+            <label for="cfg-vr-manual-align">
+              <input type="checkbox" id="cfg-vr-manual-align"> Pause for Manual Alignment (Overrides Auto-Align)
+            </label>
           </div>
         </div>
 
@@ -351,41 +380,88 @@
     <div id="app"></div>
 
     <div id="ui-overlay" class="ui-overlay">
-      <div class="glass-panel">
+      <div class="glass-panel" id="main-glass-panel">
         <h1 class="scene-title">Virtual Scene Viewer</h1>
         <p class="scene-status" id="scene-status">Loading Manifest...</p>
-        <div class="stats-container">
-          <div class="stat-box">
-            <span class="stat-label">Segments</span>
-            <span class="stat-value" id="segment-count">0</span>
+        
+        <!-- CARD 1: View & System -->
+        <div class="menu-card" id="card-view-system">
+          <h3 class="menu-card-title">View & System</h3>
+          <div class="stats-container">
+            <div class="stat-box">
+              <span class="stat-label">Segments</span>
+              <span class="stat-value" id="segment-count">0</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">FPS</span>
+              <span class="stat-value" id="fps-counter">0</span>
+            </div>
           </div>
-          <div class="stat-box">
-            <span class="stat-label">FPS</span>
-            <span class="stat-value" id="fps-counter">0</span>
+          <div class="btn-group-row">
+            <button id="toggle-camera-btn" class="primary-btn half-btn active">Orbit</button>
+            <button id="toggle-fly-camera-btn" class="primary-btn half-btn">Fly</button>
           </div>
+          <button id="reset-camera-btn" class="primary-btn">Reset Camera View</button>
+          <button id="reset-scene-btn" class="primary-btn">Reset Entire Scene</button>
+          <button id="load-file-btn" class="primary-btn btn-amber">Load Local File (.ply)</button>
+          <input type="file" id="file-input" accept=".ply,.spz,.splat" style="display: none;">
+          <button id="enter-vr-btn" class="primary-btn" disabled style="display: none;">VR Mode</button>
         </div>
-        <button id="toggle-camera-btn" class="primary-btn"
-          style="background-color: #4b5563; margin-bottom: 8px;">Camera: Orbit</button>
-        <button id="toggle-interaction-btn" class="primary-btn"
-          style="background-color: #4b5563; margin-bottom: 8px;">Interaction: OFF</button>
-        <button id="toggle-physics-btn" class="primary-btn"
-          style="background-color: #4b5563; margin-bottom: 8px;">Physics: OFF</button>
-        <button id="toggle-vc-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Virtual
-          Cameras</button>
-        <button id="toggle-gizmo-mode-btn" class="primary-btn"
-          style="background-color: #4b5563; margin-bottom: 8px; display: none;">Mode: Translate</button>
-        <button id="reset-object-btn" class="primary-btn"
-          style="background-color: #4b5563; margin-bottom: 8px; display: none;">Reset Object</button>
-        <button id="reset-scene-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Reset
-          Scene</button>
-        <button id="reset-camera-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Reset
-          Camera View</button>
-        <button id="load-file-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Load Local
-          File (.ply)</button>
-        <input type="file" id="file-input" accept=".ply,.spz,.splat" style="display: none;">
-        <button id="enter-vr-btn" class="primary-btn" disabled>VR Mode (Coming Soon)</button>
+
+        <!-- CARD 2: Scene Editing & Alignment -->
+        <div class="menu-card" id="card-scene-editing" style="display: none;">
+          <h3 class="menu-card-title">Scene Editing</h3>
+          <div class="btn-group-row">
+            <button id="gizmo-translate-btn" class="primary-btn third-btn">Move</button>
+            <button id="gizmo-rotate-btn" class="primary-btn third-btn">Rotate</button>
+            <button id="gizmo-none-btn" class="primary-btn third-btn active">None</button>
+          </div>
+          <button id="toggle-rect-select-btn" class="primary-btn">Select: Off</button>
+          <div class="btn-group-row">
+            <button id="delete-selected-btn" class="primary-btn btn-red third-btn" style="display: none;">Delete</button>
+            <button id="keep-selected-btn" class="primary-btn btn-blue third-btn" style="display: none;">Keep</button>
+            <button id="undo-delete-btn" class="primary-btn btn-amber third-btn" style="display: none;">Undo</button>
+          </div>
+          
+          <button id="submit-alignment-btn" class="primary-btn btn-green" style="display: none; margin-top: 8px;">Save Edits to Pipeline</button>
+          <button id="apply-local-btn" class="primary-btn btn-green" style="display: none; margin-top: 8px;">Apply & Reload</button>
+          <button id="export-local-btn" class="primary-btn btn-blue" style="display: none; margin-top: 8px;">Export Local (.ply)</button>
+        </div>
+
+        <!-- CARD 3: Interaction & Physics -->
+        <div class="menu-card" id="card-interaction" style="display: none;">
+          <h3 class="menu-card-title">Interaction</h3>
+          <button id="toggle-interaction-btn" class="primary-btn">Interaction: OFF</button>
+          <button id="toggle-hull-btn" class="primary-btn">Hulls: OFF</button>
+          <button id="toggle-physics-btn" class="primary-btn">Physics: OFF</button>
+          <button id="reset-object-btn" class="primary-btn" style="display: none;">Reset Object</button>
+        </div>
+
+        <!-- CARD 4: Advanced Tools -->
+        <div class="menu-card" id="card-advanced">
+          <h3 class="menu-card-title">Advanced Tools</h3>
+          <button id="toggle-vc-btn" class="primary-btn btn-purple">Virtual Cameras</button>
+        </div>
+
       </div>
       <div id="tooltip" class="tooltip hidden">Segment Name</div>
+    </div>
+
+    <!-- SVG for Rectangular Selection -->
+    <svg id="rect-select-svg" class="rect-select-svg">
+      <rect id="rect-select-box" class="rect-select-box" x="0" y="0" width="0" height="0" display="none"></rect>
+    </svg>
+
+    <!-- Scene Graph Panel -->
+    <div id="scene-graph-panel" class="glass-panel"
+      style="display: none; position: absolute; bottom: 180px; right: 20px; width: 250px; z-index: 100; max-height: 40vh; overflow-y: auto;">
+      <h2 style="margin-top: 0; font-size: 1.2rem; color: white; border-bottom: 1px solid #4b5563; padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+        <span>Scene Objects</span>
+        <button id="scene-graph-close-btn" style="background:none; border:none; color:#9ca3af; cursor:pointer; font-size:1.2rem;">&times;</button>
+      </h2>
+      <div id="scene-graph-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px;">
+         <!-- Populated dynamically -->
+      </div>
     </div>
 
     <!-- Virtual Camera Panel -->
@@ -428,12 +504,11 @@
         </label>
       </div>
 
-      <button id="vc-segment-this-btn" class="primary-btn"
-        style="background-color: #10b981; margin-bottom: 8px;">Segment This View</button>
+      <button id="vc-segment-this-btn" class="primary-btn btn-green" style="margin-bottom: 8px;">Segment This View</button>
 
-      <button id="vc-clear-btn" class="primary-btn" style="background-color: #ef4444; margin-bottom: 8px;">Clear All
-        POIs</button>
-      <button id="vc-export-btn" class="primary-btn" style="background-color: #3b82f6;">Generate & Export</button>
+      <button id="vc-clear-btn" class="primary-btn btn-red" style="margin-bottom: 8px;">Clear All POIs</button>
+      <button id="vc-submit-pipeline-btn" class="primary-btn btn-purple" style="margin-bottom: 8px; display: none;">Submit to Pipeline</button>
+      <button id="vc-export-btn" class="primary-btn btn-blue">Generate & Export Local</button>
 
       <p id="vc-status" style="font-size: 0.85rem; color: #a78bfa; margin-top: 10px;"></p>
     </div>

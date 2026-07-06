@@ -4,6 +4,7 @@ import glob
 from typing import Callable, Awaitable
 from runners.seg_normalize import run_normalize
 from runners.seg_masker import run_masker
+from runners.seg_masker_vcam import run_masker_vcam
 from runners.seg_carver import run_carver
 
 async def run_segmentation(job_id: str, job_dir: str, config: dict, push_ws: Callable[[dict], Awaitable[None]]):
@@ -45,7 +46,12 @@ async def run_segmentation(job_id: str, job_dir: str, config: dict, push_ws: Cal
         cameras_json = os.path.join(job_dir, "cameras.json")
         ply_path = os.path.join(job_dir, "point_cloud.ply")
         
-    if not os.path.exists(cameras_json):
+    # 2. Config reading
+    seg_mode = config.get("seg_mode", "auto")
+    seg_objects_str = config.get("seg_custom_objects", "")
+    vote_ratio = float(config.get("seg_vote_ratio", 0.5))
+    
+    if seg_mode == "auto" and not os.path.exists(cameras_json):
         error_msg = f"cameras.json not found at {cameras_json}"
         await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"ERROR: {error_msg}"})
         raise FileNotFoundError(error_msg)
@@ -54,11 +60,6 @@ async def run_segmentation(job_id: str, job_dir: str, config: dict, push_ws: Cal
         error_msg = f"point_cloud.ply not found at {ply_path}"
         await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"ERROR: {error_msg}"})
         raise FileNotFoundError(error_msg)
-
-    # 2. Config reading
-    seg_mode = config.get("seg_mode", "auto")
-    seg_objects_str = config.get("seg_custom_objects", "")
-    vote_ratio = float(config.get("seg_vote_ratio", 0.5))
     
     custom_objects = [obj.strip() for obj in seg_objects_str.split(",") if obj.strip()]
 
@@ -109,7 +110,39 @@ async def run_segmentation(job_id: str, job_dir: str, config: dict, push_ws: Cal
             "stats": carver_result["stats"],
             "masks_dir": masks_dir
         }
+    elif seg_mode == "vcam":
+        vcam_dir = os.path.join(job_dir, "segmentation", "vcam_input")
+        vcam_images_dir = os.path.join(vcam_dir, "images")
+        vcam_cameras_json = os.path.join(vcam_dir, "cameras.json")
+        
+        if not os.path.exists(vcam_images_dir) or not os.path.exists(vcam_cameras_json):
+            error_msg = f"Virtual camera inputs not found in {vcam_dir}. Please submit virtual cameras from the renderer."
+            await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"ERROR: {error_msg}"})
+            raise FileNotFoundError(error_msg)
+            
+        # 3b. Masker (using virtual images in object subdirectories)
+        masks_dir = os.path.join(seg_dir, "masks")
+        detected_classes = await run_masker_vcam(vcam_images_dir, masks_dir, push_mask, step_id)
+        
+        if not detected_classes:
+            await push_ws({"type": "log", "step": step_id, "progress": 100, "text": "No classes detected in virtual cameras. Segmentation complete."})
+            return {"status": "no_classes"}
+            
+        # 3c. Carver (using virtual cameras.json and masks, against the ORIGINAL point_cloud)
+        output_ply = os.path.join(seg_dir, "labelled_point_cloud.ply")
+        carver_result = await run_carver(ply_path, vcam_cameras_json, masks_dir, output_ply, vote_ratio, push_carve, step_id)
+        
+        # Save label map
+        label_map_path = os.path.join(seg_dir, "label_map.json")
+        with open(label_map_path, "w") as f:
+            json.dump(carver_result["label_map"], f, indent=4)
+            
+        return {
+            "labelled_ply": carver_result["labelled_ply"],
+            "label_map": carver_result["label_map"],
+            "stats": carver_result["stats"],
+            "masks_dir": masks_dir
+        }
     else:
-        # virtual_camera mode - skipped for now
-        await push_ws({"type": "log", "step": step_id, "progress": 100, "text": "Virtual camera mode not yet implemented."})
+        await push_ws({"type": "log", "step": step_id, "progress": 100, "text": f"Unknown seg_mode: {seg_mode}"})
         return {"status": "skipped"}

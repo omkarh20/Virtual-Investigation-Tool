@@ -49,6 +49,7 @@ function handleRoute() {
             rendererInitialised = true;
             initRendererFn();
         }
+        window.dispatchEvent(new CustomEvent('route:renderer', { detail: { hash } }));
         return;
     }
 
