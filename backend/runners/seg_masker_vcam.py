@@ -8,7 +8,9 @@ import numpy as np
 from ultralytics import YOLO, settings
 from segment_anything_hq import sam_model_registry, SamPredictor
 
-settings.update({'weights_dir': '/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints'})
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+CHECKPOINTS_DIR = os.path.join(BASE_DIR, 'dev', 'checkpoints')
+settings.update({'weights_dir': CHECKPOINTS_DIR})
 
 async def run_masker_vcam(vcam_images_dir: str, masks_dir: str, push_ws: Callable[[dict], Awaitable[None]], step_id: int) -> list[str]:
     """
@@ -30,7 +32,7 @@ async def run_masker_vcam(vcam_images_dir: str, masks_dir: str, push_ws: Callabl
     
     # Pre-load SAM-HQ once to save time
     def _load_sam():
-        s_model = sam_model_registry["vit_h"](checkpoint="/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/sam_hq_vit_h.pth").to(device)
+        s_model = sam_model_registry["vit_h"](checkpoint=os.path.join(CHECKPOINTS_DIR, 'sam_hq_vit_h.pth')).to(device)
         return SamPredictor(s_model)
         
     try:
@@ -52,9 +54,9 @@ async def run_masker_vcam(vcam_images_dir: str, masks_dir: str, push_ws: Callabl
             
         def _load_yolo():
             if obj_name.lower() == 'auto':
-                return YOLO('/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/yoloe-26x-seg-pf.pt')
+                return YOLO(os.path.join(CHECKPOINTS_DIR, 'yoloe-26x-seg-pf.pt'))
             else:
-                y_model = YOLO('/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/yoloe-26x-seg.pt')
+                y_model = YOLO(os.path.join(CHECKPOINTS_DIR, 'yoloe-26x-seg.pt'))
                 y_model.set_classes([obj_name])
                 return y_model
                 

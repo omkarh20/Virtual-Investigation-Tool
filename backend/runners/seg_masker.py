@@ -9,7 +9,9 @@ from ultralytics import YOLO, settings
 from segment_anything_hq import sam_model_registry, SamPredictor
 
 # Tell Ultralytics to look for auxiliary files (like MobileCLIP) in the checkpoints folder
-settings.update({'weights_dir': '/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints'})
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+CHECKPOINTS_DIR = os.path.join(BASE_DIR, 'dev', 'checkpoints')
+settings.update({'weights_dir': CHECKPOINTS_DIR})
 
 async def run_masker(images_dir: str, masks_dir: str, custom_objects: list[str], push_ws: Callable[[dict], Awaitable[None]], step_id: int) -> list[str]:
     """
@@ -25,12 +27,12 @@ async def run_masker(images_dir: str, masks_dir: str, custom_objects: list[str],
     # 1. Load Models in thread
     def _load_models():
         if custom_objects:
-            y_model = YOLO('/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/yoloe-26x-seg.pt')
+            y_model = YOLO(os.path.join(CHECKPOINTS_DIR, 'yoloe-26x-seg.pt'))
             y_model.set_classes(custom_objects)
         else:
-            y_model = YOLO('/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/yoloe-26x-seg-pf.pt')
+            y_model = YOLO(os.path.join(CHECKPOINTS_DIR, 'yoloe-26x-seg-pf.pt'))
         
-        s_model = sam_model_registry["vit_h"](checkpoint="/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/sam_hq_vit_h.pth").to(device)
+        s_model = sam_model_registry["vit_h"](checkpoint=os.path.join(CHECKPOINTS_DIR, 'sam_hq_vit_h.pth')).to(device)
         s_pred = SamPredictor(s_model)
         return y_model, s_pred
 

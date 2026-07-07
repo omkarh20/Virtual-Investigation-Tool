@@ -10,16 +10,19 @@ from segment_anything_hq import sam_model_registry, SamPredictor
 
 def get_args():
     parser = argparse.ArgumentParser(description="Hybrid YOLOE-26 & SAM HQ Smooth Mask Pipeline")
+    
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    
     parser.add_argument(
         "--input_dir", 
         type=str, 
-        default="/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/data/FourItems",
+        default=os.path.join(BASE_DIR, "dev", "data", "FourItems"),
         help="Path to the folder containing input images"
     )
     parser.add_argument(
         "--master_dir", 
         type=str, 
-        default="/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/outputs/masker3_results",
+        default=os.path.join(BASE_DIR, "dev", "outputs", "masker3_results"),
         help="Master directory where accurate masks will be saved"
     )
     return parser.parse_args()
@@ -48,18 +51,22 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"\n[*] Booting Models into VRAM ({device})...")
     
+    # Set up checkpoints dir relative to this script
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    CHECKPOINTS_DIR = os.path.join(BASE_DIR, 'dev', 'checkpoints')
+
     # 1. Load YOLOE-26 (Weights auto-download via Ultralytics if not locally cached)
     if custom_targets:
         print("[*] Loading YOLOE-26 Text-Prompt architecture...")
-        yoloe_model = YOLO('/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/yoloe-26x-seg.pt')
+        yoloe_model = YOLO(os.path.join(CHECKPOINTS_DIR, 'yoloe-26x-seg.pt'))
         yoloe_model.set_classes(custom_targets)
     else:
         print("[*] Loading YOLOE-26 Prompt-Free auto-discovery architecture...")
-        yoloe_model = YOLO('/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/yoloe-26x-seg-pf.pt')
+        yoloe_model = YOLO(os.path.join(CHECKPOINTS_DIR, 'yoloe-26x-seg-pf.pt'))
     
     # 2. Load SAM HQ for smooth contour refinement
     print("[*] Loading SAM HQ contour refiner...")
-    sam = sam_model_registry["vit_h"](checkpoint="/teamspace/studios/this_studio/Virtual-Investigation-Tool/dev/checkpoints/sam_hq_vit_h.pth").to(device)
+    sam = sam_model_registry["vit_h"](checkpoint=os.path.join(CHECKPOINTS_DIR, 'sam_hq_vit_h.pth')).to(device)
     predictor = SamPredictor(sam)
 
     print(f"\n[*] Starting batch processing for {len(image_files)} images...")
