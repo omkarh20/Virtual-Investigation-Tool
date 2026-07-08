@@ -497,3 +497,20 @@ option {
   content: "📄";
   margin-right: 6px;
 }
+
+.align-btn {
+  background-color: #374151;
+  color: white;
+  border: 1px solid #4b5563;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.align-btn:hover {
+  background-color: #4b5563;
+  border-color: #6b7280;
+}
+

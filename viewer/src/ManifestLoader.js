@@ -10,8 +10,14 @@ export class ManifestLoader {
         }
 
         if (manifestUrl) {
+            if (manifestUrl.includes('localhost:8000')) {
+                manifestUrl = manifestUrl.replace('localhost:8000', '127.0.0.1:8000');
+            }
             try {
                 const response = await fetch(manifestUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 const data = await response.json();
                 data.baseUrl = manifestUrl.substring(0, manifestUrl.lastIndexOf('/'));
                 return data;

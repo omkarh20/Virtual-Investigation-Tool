@@ -5,6 +5,10 @@ import os
 import argparse
 from ultralytics import YOLO
 
+# Suppress harmless model registry overwrite warnings from segment_anything_hq
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="segment_anything_hq")
+
 # Import SAM HQ
 from segment_anything_hq import sam_model_registry, SamPredictor
 

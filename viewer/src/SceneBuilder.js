@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { ManifestLoader } from './ManifestLoader.js';
 import { SplatMesh } from '@sparkjsdev/spark';
 
@@ -23,6 +24,86 @@ export class SceneBuilder {
         this.interactionMode = false;
         this.gizmoMode = 'translate';
         this.selectedId = null;
+
+        // Alignment mode properties
+        this.alignmentDummy = new THREE.Object3D();
+        this.scene.add(this.alignmentDummy);
+        this.prevDummyQuaternion = new THREE.Quaternion();
+        this.isAligning = false;
+
+        // Interactive mini-gizmo for whole scene rotation
+        this.alignContainer = document.createElement('div');
+        this.alignContainer.id = 'alignment-gizmo-container';
+        this.alignContainer.style.position = 'absolute';
+        this.alignContainer.style.right = '20px';
+        this.alignContainer.style.top = '20px';
+        this.alignContainer.style.width = '220px';
+        this.alignContainer.style.height = '220px';
+        this.alignContainer.style.zIndex = '1000';
+        this.alignContainer.style.borderRadius = '50%';
+        this.alignContainer.style.background = 'rgba(15, 23, 42, 0.65)';
+        this.alignContainer.style.backdropFilter = 'blur(4px)';
+        this.alignContainer.style.border = '1px solid rgba(255, 255, 255, 0.15)';
+        this.alignContainer.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.5)';
+        this.alignContainer.style.display = 'none';
+        this.alignContainer.style.pointerEvents = 'auto';
+        document.body.appendChild(this.alignContainer);
+
+        // Setup mini scene, camera, renderer
+        this.alignScene = new THREE.Scene();
+        this.alignRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.alignRenderer.setSize(220, 220);
+        this.alignRenderer.setPixelRatio(window.devicePixelRatio);
+        this.alignContainer.appendChild(this.alignRenderer.domElement);
+
+        this.alignCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+        this.alignCamera.position.set(0, 0, 2.5);
+
+        // Mini sphere representing the scene rotation
+        const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
+        const sphereMat = new THREE.MeshStandardMaterial({ 
+            color: 0x6366f1, 
+            wireframe: true,
+            transparent: true,
+            opacity: 0.8
+        });
+        this.alignDummySphere = new THREE.Mesh(sphereGeo, sphereMat);
+        this.alignScene.add(this.alignDummySphere);
+
+        // Simple lighting for shaded appearance if wireframe isn't enough
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(1, 2, 1);
+        this.alignScene.add(dirLight);
+        this.alignScene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+        // Setup mini transform controls for the sphere
+        this.alignControls = new TransformControls(this.alignCamera, this.alignRenderer.domElement);
+        this.alignControls.setMode('rotate');
+        this.alignControls.setSize(1.0);
+        this.alignScene.add(this.alignControls.getHelper());
+        this.alignControls.attach(this.alignDummySphere);
+
+        this.alignControls.addEventListener('objectChange', () => {
+            if (!this.isAligning) return;
+            const currentQuat = this.alignDummySphere.quaternion;
+            const prevQuatInv = this.prevDummyQuaternion.clone().invert();
+            const deltaQuat = currentQuat.clone().multiply(prevQuatInv);
+            
+            this.applyAlignmentRotation(deltaQuat);
+            
+            this.prevDummyQuaternion.copy(currentQuat);
+        });
+
+        this.alignControls.addEventListener('dragging-changed', (event) => {
+            if (event.value) {
+                this.disableControls();
+                this.prevDummyQuaternion.copy(this.alignDummySphere.quaternion);
+            } else {
+                this.enableControls();
+                this.alignDummySphere.quaternion.set(0, 0, 0, 1);
+                this.prevDummyQuaternion.set(0, 0, 0, 1);
+            }
+        });
         
         this.setupRaycasting();
         this.setupInteractionToggle();
@@ -38,26 +119,91 @@ export class SceneBuilder {
         
         const statusEl = document.getElementById('scene-status');
         const countEl = document.getElementById('segment-count');
+        const host = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
+        const BACKEND_URL = `http://${host}:8000`;
+        const BACKEND_WS = `ws://${host}:8000`;
 
-        if (statusEl) statusEl.innerText = `Loading ${file.name}...`;
+        if (statusEl) statusEl.innerText = "Uploading PLY file to backend server...";
 
-        const url = URL.createObjectURL(file);
-        const splat = new SplatMesh({ url: url });
-        splat.quaternion.set(1, 0, 0, 0);
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            
+            const response = await fetch(`${BACKEND_URL}/mesh-ply`, {
+                method: "POST",
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error("Pipeline execution failed on server");
+            }
+            
+            const data = await response.json();
+            const jobId = data.job_id;
+            
+            if (statusEl) statusEl.innerText = "Reconstructing mesh: starting backend pipeline...";
 
-        splat.userData = {
-            id: Date.now(),
-            label: file.name,
-            movable: false
-        };
+            // Connect to WebSocket to track reconstruction progress
+            const ws = new WebSocket(`${BACKEND_WS}/progress/${jobId}`);
+            
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'log') {
+                    if (statusEl) {
+                        statusEl.innerText = `Reconstructing: [${msg.progress}%] ${msg.text}`;
+                    }
+                } else if (msg.type === 'step_end' && msg.step === 5) {
+                    let manifestUrl = msg.manifest_url;
+                    
+                    // Normalize manifest_url loopback to prevent connection refusal in browser
+                    if (manifestUrl && manifestUrl.includes('localhost:8000')) {
+                        manifestUrl = manifestUrl.replace('localhost:8000', '127.0.0.1:8000');
+                    }
+                    
+                    sessionStorage.setItem('vit_manifest_url', manifestUrl);
+                    if (statusEl) statusEl.innerText = `Reconstructed successfully: ${file.name}`;
+                    
+                    ws.close();
+                    
+                    // Trigger loading of the actual scene and collision boundaries!
+                    this.loadFromManifest();
+                }
+            };
 
-        this.scene.add(splat);
-        this.segments.set(splat.userData.id, splat);
+            ws.onerror = (err) => {
+                console.error("WebSocket connection error:", err);
+                if (statusEl) statusEl.innerText = "Error: Connection lost during meshing.";
+            };
 
-        if (statusEl) statusEl.innerText = `Loaded: ${file.name}`;
-        if (countEl) countEl.innerText = this.segments.size.toString();
-        
-        setTimeout(() => URL.revokeObjectURL(url), 5000);
+            ws.onclose = () => {
+                console.log("WebSocket closed for job:", jobId);
+            };
+            
+        } catch (error) {
+            console.warn("Backend meshing pipeline failed, falling back to local preview:", error);
+            if (statusEl) statusEl.innerText = `Local Preview: ${file.name} (No mesh colliders)`;
+            
+            const url = URL.createObjectURL(file);
+            const splat = new SplatMesh({ url: url });
+            splat.quaternion.set(1, 0, 0, 0);
+
+            splat.userData = {
+                id: Date.now(),
+                label: file.name,
+                movable: false
+            };
+
+            this.scene.add(splat);
+            this.segments.set(splat.userData.id, splat);
+
+            if (countEl) countEl.innerText = this.segments.size.toString();
+            
+            const alignPanel = document.querySelector('.scene-align-panel');
+            if (alignPanel) alignPanel.style.display = 'block';
+            this.startAlignmentMode();
+            
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+        }
     }
 
     clearScene() {
@@ -98,21 +244,39 @@ export class SceneBuilder {
         if (statusEl) statusEl.innerText = `Scene: ${manifest.scene_id}`;
         if (countEl) countEl.innerText = manifest.segments.length.toString();
 
+        const startTime = performance.now();
+        const loadPromises = [];
+
         for (const segment of manifest.segments) {
             if (manifest.baseUrl) {
                 const url = `${manifest.baseUrl}/${segment.file}`;
-                this.loadSplatSegment(segment, url);
+                loadPromises.push(this.loadSplatSegment(segment, url));
             } else {
                 this.buildDummySegment(segment);
             }
         }
+
+        if (loadPromises.length > 0) {
+            if (statusEl) statusEl.innerText = "Loading 3D assets...";
+            await Promise.all(loadPromises);
+        }
+
+        const endTime = performance.now();
+        const elapsedSeconds = ((endTime - startTime) / 1000).toFixed(2);
+        if (statusEl) {
+            statusEl.innerText = `Scene: ${manifest.scene_id} (Loaded in ${elapsedSeconds}s)`;
+        }
         
         const vrBtn = document.getElementById('enter-vr-btn');
         if (vrBtn) vrBtn.disabled = false;
+
+        const alignPanel = document.querySelector('.scene-align-panel');
+        if (alignPanel) alignPanel.style.display = 'block';
+        this.startAlignmentMode();
     }
 
     // ── Splat Segment Loading ───────────────────────────────────────────────
-    async loadSplatSegment(segment, url) {
+    loadSplatSegment(segment, url) {
         const splat = new SplatMesh({ url: url });
         splat.quaternion.set(1, 0, 0, 0);
 
@@ -129,62 +293,72 @@ export class SceneBuilder {
         const glbUrl = url.replace(segment.file, segment.collision);
         const loader = new GLTFLoader();
 
-        loader.load(glbUrl, (gltf) => {
-            let mesh = null;
-            gltf.scene.traverse((child) => {
-                if (child.isMesh && !mesh) mesh = child;
-            });
-            if (!mesh) return;
+        return new Promise((resolve) => {
+            loader.load(glbUrl, (gltf) => {
+                let mesh = null;
+                gltf.scene.traverse((child) => {
+                    if (child.isMesh && !mesh) mesh = child;
+                });
+                if (!mesh) {
+                    resolve();
+                    return;
+                }
 
-            const geometry = mesh.geometry;
-            // Shift vertices so the mesh origin is at the centroid
-            geometry.translate(-segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
+                const geometry = mesh.geometry;
+                // Shift vertices so the mesh origin is at the centroid
+                geometry.translate(-segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
 
-            const material = new THREE.MeshBasicMaterial({ 
-                color: color, 
-                wireframe: false,
-                transparent: true,
-                opacity: 0.3,    
-                depthWrite: false, 
-                visible: this.interactionMode
-            });
-            const hitbox = new THREE.Mesh(geometry, material);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: color, 
+                    wireframe: false,
+                    transparent: true,
+                    opacity: 0.3,    
+                    depthWrite: false, 
+                    visible: this.interactionMode,
+                    side: THREE.DoubleSide
+                });
+                const hitbox = new THREE.Mesh(geometry, material);
 
-            // Place the mesh at the flipped centroid and apply the 180 deg X rotation
-            hitbox.position.set(segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
-            hitbox.quaternion.set(1, 0, 0, 0);
+                // Place the mesh at the flipped centroid and apply the 180 deg X rotation
+                hitbox.position.set(segment.centroid[0], -segment.centroid[1], -segment.centroid[2]);
+                hitbox.quaternion.set(1, 0, 0, 0);
 
-            hitbox.userData = {
-                id: segment.id,
-                label: segment.label,
-                movable: segment.movable,
-                splatRef: splat
-            };
-            
-            // Wireframe edges
-            const edges = new THREE.EdgesGeometry(geometry);
-            const lineMat = new THREE.LineBasicMaterial({ color: color, opacity: 0.8, transparent: true });
-            const line = new THREE.LineSegments(edges, lineMat);
-            line.visible = this.interactionMode;
-            
-            hitbox.userData.edgeHelper = line;
-            hitbox.userData.originalColor = color;
-            hitbox.add(line);
-            
-            this.scene.add(hitbox);
-            this.hitboxes.set(segment.id, hitbox);
+                hitbox.userData = {
+                    id: segment.id,
+                    label: segment.label,
+                    movable: segment.movable,
+                    splatRef: splat
+                };
+                
+                // Wireframe edges
+                const edges = new THREE.EdgesGeometry(geometry);
+                const lineMat = new THREE.LineBasicMaterial({ color: color, opacity: 0.8, transparent: true });
+                const line = new THREE.LineSegments(edges, lineMat);
+                line.visible = this.interactionMode;
+                
+                hitbox.userData.edgeHelper = line;
+                hitbox.userData.originalColor = color;
+                hitbox.add(line);
+                
+                this.scene.add(hitbox);
+                this.hitboxes.set(segment.id, hitbox);
 
-            // Register with physics engine!
-            if (this.physicsManager) {
-                this.physicsManager.createBodyFromMesh(segment.id, hitbox, segment.movable);
-            }
+                // Register with physics engine!
+                if (this.physicsManager) {
+                    this.physicsManager.createBodyFromMesh(segment.id, hitbox, segment.movable);
+                }
 
-            // Store original positions and rotations for reset
-            this.originalPositions.set(segment.id, {
-                hitbox: hitbox.position.clone(),
-                splat: splat.position.clone(),
-                hitboxQuat: hitbox.quaternion.clone(),
-                splatQuat: splat.quaternion.clone()
+                // Store original positions and rotations for reset
+                this.originalPositions.set(segment.id, {
+                    hitbox: hitbox.position.clone(),
+                    splat: splat.position.clone(),
+                    hitboxQuat: hitbox.quaternion.clone(),
+                    splatQuat: splat.quaternion.clone()
+                });
+                resolve();
+            }, undefined, (error) => {
+                console.error("Error loading collision GLB:", error);
+                resolve();
             });
         });
     }
@@ -238,8 +412,14 @@ export class SceneBuilder {
                 if (hitbox.userData.edgeHelper) {
                     if (hitbox.userData.id === this.selectedId) continue; // skip selected
                     hitbox.userData.edgeHelper.visible = this.interactionMode;
-                    hitbox.material.visible = this.interactionMode;
+                    hitbox.material.opacity = this.interactionMode ? 0.3 : 0.0;
                 }
+            }
+
+            if (this.interactionMode && this.isAligning) {
+                this.endAlignmentMode();
+                const alignPanel = document.querySelector('.scene-align-panel');
+                if (alignPanel) alignPanel.style.display = 'none';
             }
 
             if (!this.interactionMode) {
@@ -275,7 +455,7 @@ export class SceneBuilder {
             hitbox.userData.edgeHelper.material.color.setHex(0x22ff44);
             hitbox.userData.edgeHelper.visible = true;
             hitbox.material.color.setHex(0x22ff44);
-            hitbox.material.visible = true;
+            hitbox.material.opacity = 0.3;
         }
 
         // Reset gizmo mode to translate by default upon selection
@@ -307,7 +487,7 @@ export class SceneBuilder {
                 hitbox.userData.edgeHelper.material.color.setHex(hitbox.userData.originalColor);
                 hitbox.userData.edgeHelper.visible = this.interactionMode;
                 hitbox.material.color.setHex(hitbox.userData.originalColor);
-                hitbox.material.visible = this.interactionMode;
+                hitbox.material.opacity = this.interactionMode ? 0.3 : 0.0;
             }
         }
 
@@ -362,6 +542,17 @@ export class SceneBuilder {
     setupGizmoSync() {
         // Apply position and rotation to SplatMesh when Hitbox changes
         this.transformControls.addEventListener('objectChange', () => {
+            if (this.isAligning && this.transformControls.object === this.alignmentDummy) {
+                const currentQuat = this.alignmentDummy.quaternion;
+                const prevQuatInv = this.prevDummyQuaternion.clone().invert();
+                const deltaQuat = currentQuat.clone().multiply(prevQuatInv);
+                
+                this.applyAlignmentRotation(deltaQuat);
+                
+                this.prevDummyQuaternion.copy(currentQuat);
+                return;
+            }
+
             if (this.selectedId === null) return;
             
             const hitbox = this.hitboxes.get(this.selectedId);
@@ -396,8 +587,15 @@ export class SceneBuilder {
         this.transformControls.addEventListener('dragging-changed', (event) => {
             if (event.value) {
                 this.disableControls();
+                if (this.isAligning && this.transformControls.object === this.alignmentDummy) {
+                    this.prevDummyQuaternion.copy(this.alignmentDummy.quaternion);
+                }
             } else {
                 this.enableControls();
+                if (this.isAligning && this.transformControls.object === this.alignmentDummy) {
+                    this.alignmentDummy.quaternion.set(0, 0, 0, 1);
+                    this.prevDummyQuaternion.set(0, 0, 0, 1);
+                }
             }
         });
     }
@@ -459,6 +657,10 @@ export class SceneBuilder {
         if (this.physicsManager && window.physicsEnabled) {
             this.physicsManager.resetAll();
         }
+
+        const alignPanel = document.querySelector('.scene-align-panel');
+        if (alignPanel) alignPanel.style.display = 'block';
+        this.startAlignmentMode();
     }
 
     setupResetButtons() {
@@ -525,4 +727,182 @@ export class SceneBuilder {
             }
         }
     }
+
+    setVirtualCameraManager(vcManager) {
+        this.vcManager = vcManager;
+    }
+
+    createCollisionMeshForLocalSplat() {
+        if (this.segments.size === 0) return;
+        
+        // Find the local splat (there should be only one for local file)
+        const splat = Array.from(this.segments.values())[0];
+        if (!splat) return;
+
+        // Compute bounding box
+        let bbox = null;
+        if (typeof splat.getBoundingBox === 'function') {
+            bbox = splat.getBoundingBox();
+        } else if (splat.geometry) {
+            splat.geometry.computeBoundingBox();
+            bbox = splat.geometry.boundingBox;
+        }
+
+        if (bbox) {
+            const size = new THREE.Vector3();
+            bbox.getSize(size);
+            const center = new THREE.Vector3();
+            bbox.getCenter(center);
+
+            // Create hitbox mesh (invisible solid container or visible wireframe room)
+            const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0x3b82f6,
+                wireframe: false,
+                transparent: true,
+                opacity: 0.15,
+                depthWrite: false,
+                visible: window.roomMeshVisible || false,
+                side: THREE.DoubleSide
+            });
+            const hitbox = new THREE.Mesh(geometry, material);
+            
+            // Apply splat transformation
+            hitbox.position.copy(center);
+            hitbox.quaternion.copy(splat.quaternion);
+            hitbox.position.applyQuaternion(splat.quaternion).add(splat.position);
+
+            hitbox.userData = {
+                id: splat.userData.id,
+                label: splat.userData.label,
+                movable: false,
+                splatRef: splat
+            };
+
+            // Setup wireframe helper
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, opacity: 0.8, transparent: true });
+            const line = new THREE.LineSegments(edges, lineMat);
+            line.visible = window.roomMeshVisible || false;
+            hitbox.userData.edgeHelper = line;
+            hitbox.userData.originalColor = 0x3b82f6;
+            hitbox.add(line);
+
+            this.scene.add(hitbox);
+            this.hitboxes.set(splat.userData.id, hitbox);
+
+            // Register with physics engine to build floor/walls
+            if (this.physicsManager) {
+                this.physicsManager.createBodyFromMesh(splat.userData.id, hitbox, false);
+            }
+
+            // Save original positions
+            this.originalPositions.set(splat.userData.id, {
+                hitbox: hitbox.position.clone(),
+                splat: splat.position.clone(),
+                hitboxQuat: hitbox.quaternion.clone(),
+                splatQuat: splat.quaternion.clone()
+            });
+
+            console.log("Created local collision room bounds for:", splat.userData.label);
+        }
+    }
+
+    startAlignmentMode() {
+        this.deselectObject();
+        this.isAligning = true;
+        this.alignmentDummy.position.set(0, 0, 0);
+        this.alignmentDummy.quaternion.set(0, 0, 0, 1);
+        this.prevDummyQuaternion.set(0, 0, 0, 1);
+
+        if (this.onAlignmentStart) this.onAlignmentStart();
+        
+        // Setup mini alignment gizmo
+        this.alignDummySphere.quaternion.set(0, 0, 0, 1);
+        this.alignContainer.style.display = 'block';
+
+        // Turn off interaction mode to avoid collision/selection conflicts
+        this.interactionMode = false;
+        const interactionBtn = document.getElementById('toggle-interaction-btn');
+        if (interactionBtn) {
+            interactionBtn.innerText = 'Interaction: OFF';
+            interactionBtn.style.backgroundColor = '#4b5563';
+        }
+        for (const hitbox of this.hitboxes.values()) {
+            if (hitbox.userData.edgeHelper) {
+                hitbox.userData.edgeHelper.visible = false;
+                hitbox.material.opacity = 0.0;
+            }
+        }
+
+        // Detach main controls from scene objects during alignment
+        this.transformControls.detach();
+    }
+
+    endAlignmentMode() {
+        if (this.isAligning) {
+            this.isAligning = false;
+            this.alignContainer.style.display = 'none';
+        }
+    }
+
+    applyAlignmentRotation(q) {
+        // Rotate all splats
+        for (const splat of this.segments.values()) {
+            splat.position.applyQuaternion(q);
+            splat.quaternion.premultiply(q);
+            splat.updateMatrixWorld();
+        }
+
+        // Rotate all hitboxes
+        for (const hitbox of this.hitboxes.values()) {
+            hitbox.position.applyQuaternion(q);
+            hitbox.quaternion.premultiply(q);
+            hitbox.updateMatrixWorld();
+
+            // Sync physics bodies
+            if (this.physicsManager) {
+                this.physicsManager.updateBodyTransform(hitbox.userData.id, hitbox.position, hitbox.quaternion);
+            }
+        }
+
+        // Update originalPositions too so they reset/sync correctly
+        for (const [id, orig] of this.originalPositions.entries()) {
+            orig.hitbox.applyQuaternion(q);
+            orig.hitboxQuat.premultiply(q);
+            orig.splat.applyQuaternion(q);
+            orig.splatQuat.premultiply(q);
+        }
+
+        // Also rotate POIs if vcManager exists
+        if (this.vcManager) {
+            this.vcManager.pois.forEach(poi => {
+                poi.position.applyQuaternion(q);
+                poi.updateMatrixWorld();
+            });
+            this.vcManager.updatePreview();
+            this.vcManager.updatePoiList();
+        }
+    }
+
+    rotateScene(axisName, angle) {
+        this.deselectObject();
+
+        const axis = new THREE.Vector3();
+        if (axisName === 'x') axis.set(1, 0, 0);
+        else if (axisName === 'y') axis.set(0, 1, 0);
+        else if (axisName === 'z') axis.set(0, 0, 1);
+
+        const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+        this.applyAlignmentRotation(q);
+    }
+
+    renderAlignmentGizmo() {
+        if (!this.isAligning) return;
+        this.alignCamera.quaternion.copy(this.camera.quaternion);
+        this.alignCamera.position.set(0, 0, 2.5).applyQuaternion(this.camera.quaternion);
+        this.alignCamera.lookAt(0, 0, 0);
+        this.alignRenderer.render(this.alignScene, this.alignCamera);
+    }
 }
+

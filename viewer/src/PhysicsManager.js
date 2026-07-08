@@ -48,27 +48,55 @@ export class PhysicsManager {
             // Back Wall
             body.addShape(new CANNON.Box(new CANNON.Vec3(size.x / 2, size.y / 2, thickness)), new CANNON.Vec3(center.x, center.y, bbox.max.z + thickness));
 
+            // Add detailed trimesh for internal wall/furniture collisions
+            const geometry = mesh.geometry;
+            if (geometry && geometry.attributes.position) {
+                const positionAttr = geometry.attributes.position;
+                const vertices = [];
+                for (let i = 0; i < positionAttr.count; i++) {
+                    vertices.push(positionAttr.getX(i), positionAttr.getY(i), positionAttr.getZ(i));
+                }
+                
+                const indices = [];
+                if (geometry.index) {
+                    for (let i = 0; i < geometry.index.count; i++) {
+                        indices.push(geometry.index.getX(i));
+                    }
+                } else {
+                    for (let i = 0; i < positionAttr.count; i++) {
+                        indices.push(i);
+                    }
+                }
+                
+                const trimeshShape = new CANNON.Trimesh(vertices, indices);
+                body.addShape(trimeshShape);
+            }
+
             body.position.copy(mesh.position);
             body.quaternion.copy(mesh.quaternion);
             
             // --- ADD VISIBLE BOUNDARY BOX ---
+            const isVisible = window.roomMeshVisible || false;
             const roomGeo = new THREE.BoxGeometry(size.x, size.y, size.z);
             const roomMat = new THREE.MeshBasicMaterial({
                 color: 0x00ffff,       // Cyan sci-fi color
                 transparent: true,
                 opacity: 0.05,         // Very faint fill
                 side: THREE.BackSide,  // So you see the inside walls
-                depthWrite: false
+                depthWrite: false,
+                visible: isVisible
             });
             const roomMesh = new THREE.Mesh(roomGeo, roomMat);
             roomMesh.position.copy(center);
+            roomMesh.visible = isVisible;
             
             // Add a wireframe for a cool grid-like boundary effect
             const edges = new THREE.EdgesGeometry(roomGeo);
             const edgeMat = new THREE.LineBasicMaterial({ 
                 color: 0x00ffff, 
                 transparent: true, 
-                opacity: 0.3 
+                opacity: 0.3,
+                visible: isVisible
             });
             const roomWireframe = new THREE.LineSegments(edges, edgeMat);
             roomMesh.add(roomWireframe);
