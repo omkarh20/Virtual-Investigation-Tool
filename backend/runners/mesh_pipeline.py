@@ -303,7 +303,7 @@ def extract_mesh(ply_path, output_mesh_path, opacity_threshold=0.5, depth=9, met
         mesh.remove_vertices_by_mask(vertices_to_remove)
         
     # Simplify the mesh for rendering and physics performance
-    target_triangles = 5000
+    target_triangles = 100000
     if len(mesh.triangles) > target_triangles:
         print(f"[*] Simplifying mesh from {len(mesh.triangles)} to {target_triangles} triangles for performance...")
         mesh = mesh.simplify_quadric_decimation(target_number_of_triangles=target_triangles)

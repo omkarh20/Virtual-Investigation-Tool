@@ -149,7 +149,8 @@ function initRenderer() {
             // Toggle visibility of the room hitbox(es) and child boundary meshes
             for (const [id, hitbox] of sceneBuilder.hitboxes.entries()) {
                 if (hitbox.userData.label.toLowerCase().includes('background') || sceneBuilder.hitboxes.size === 1) {
-                    hitbox.material.opacity = window.roomMeshVisible ? 0.3 : 0.0;
+                    hitbox.material.visible = window.roomMeshVisible;
+                    hitbox.material.opacity = window.roomMeshVisible ? 0.6 : 0.0;
                     if (hitbox.userData.edgeHelper) {
                         hitbox.userData.edgeHelper.visible = window.roomMeshVisible;
                     }
@@ -165,6 +166,21 @@ function initRenderer() {
             const customMeshPanel = document.getElementById('custom-mesh-panel');
             if (customMeshPanel) {
                 customMeshPanel.style.display = window.roomMeshVisible ? 'block' : 'none';
+            }
+        });
+    }
+
+    // Toggle 3D Gaussian Splatting model visibility (show mesh only)
+    window.splatsVisible = true;
+    const toggleSplatBtn = document.getElementById('toggle-splat-btn');
+    if (toggleSplatBtn) {
+        toggleSplatBtn.addEventListener('click', () => {
+            window.splatsVisible = !window.splatsVisible;
+            toggleSplatBtn.innerText = `Splat Model: ${window.splatsVisible ? 'ON' : 'OFF'}`;
+            toggleSplatBtn.style.backgroundColor = window.splatsVisible ? '#2563eb' : '#4b5563';
+
+            for (const splat of sceneBuilder.segments.values()) {
+                splat.visible = window.splatsVisible;
             }
         });
     }
@@ -705,14 +721,10 @@ function initRenderer() {
                             if (hit.distance < checkDistance) {
                                 if (hit.face && hit.face.normal) {
                                     const worldNormal = hit.face.normal.clone().applyQuaternion(hit.object.quaternion);
-                                    
-                                    // Ignore floors and ceilings (flat surface normals) to prevent getting stuck
-                                    if (Math.abs(worldNormal.y) < 0.6) {
-                                        if (worldNormal.dot(moveDir) < 0) {
-                                            collisionDetected = true;
-                                            hitNormal = worldNormal;
-                                            break;
-                                        }
+                                    if (worldNormal.dot(moveDir) < 0) {
+                                        collisionDetected = true;
+                                        hitNormal = worldNormal;
+                                        break;
                                     }
                                 } else {
                                     collisionDetected = true;

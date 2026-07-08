@@ -289,7 +289,7 @@ export class SceneBuilder {
         this.scene.add(splat);
         this.segments.set(segment.id, splat);
         
-        const color = segment.movable ? 0xef4444 : 0x3b82f6;
+        const color = 0xef4444;
         const glbUrl = url.replace(segment.file, segment.collision);
         const loader = new GLTFLoader();
 
@@ -371,7 +371,7 @@ export class SceneBuilder {
 
         const geometry = new THREE.BoxGeometry(width, height, depth);
         
-        const color = segment.movable ? 0xef4444 : 0x3b82f6;
+        const color = 0xef4444;
         const material = new THREE.MeshStandardMaterial({ 
             color: color, 
             transparent: true, 
