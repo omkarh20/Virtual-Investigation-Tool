@@ -57,4 +57,4 @@ venv\Scripts\activate  # On Windows
 # Install backend dependencies
 cd backend
 # pip install -r requirements.txt (Will be added soon)
-```
+```uvicorn main:app --reload --port 8000

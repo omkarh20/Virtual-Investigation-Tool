@@ -44,6 +44,15 @@
   <!-- ══════════════════════════════════════════════════════════════════ -->
   <div id="page-home" class="page">
     <div class="home-content">
+      <div class="home-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px;">
+        <button class="btn btn-primary" id="home-new-btn">+ New Investigation</button>
+        <button class="btn btn-secondary" id="home-skip-btn">Skip to Renderer →</button>
+        <div class="direct-upload-wrapper" style="position: relative; overflow: hidden; display: inline-block;">
+          <button class="btn btn-secondary" id="home-upload-ply-btn">📂 Upload & Mesh PLY</button>
+          <input type="file" id="home-input-ply" accept=".ply" style="position: absolute; font-size: 100px; opacity: 0; right: 0; top: 0; cursor: pointer;" />
+        </div>
+      </div>
+      <p id="home-upload-status" style="margin-top: 10px; font-size: 0.9rem; color: #9ca3af; height: 1.2rem; margin-bottom: 12px;"></p>
 
       <h1 class="home-title">Virtual Investigation Tool</h1>
       <p class="home-subtitle">3D Gaussian Splat reconstruction, segmentation and inspection.</p>
@@ -401,6 +410,35 @@
             <button id="toggle-camera-btn" class="primary-btn half-btn active">Orbit</button>
             <button id="toggle-fly-camera-btn" class="primary-btn half-btn">Fly</button>
           </div>
+          <button id="toggle-interaction-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Interaction: OFF</button>
+          <button id="toggle-physics-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Physics: OFF</button>
+          <button id="toggle-grid-btn" class="primary-btn" style="background-color: #2563eb; margin-bottom: 8px;">Grid: ON</button>
+          <button id="toggle-mesh-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Room Mesh: OFF</button>
+          <button id="toggle-splat-btn" class="primary-btn" style="background-color: #2563eb; margin-bottom: 8px;">Splat Model: ON</button>
+          <button id="toggle-vc-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Virtual Cameras</button>
+          <button id="toggle-nav-area-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Grid Nav: OFF</button>
+          <button id="toggle-gizmo-mode-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px; display: none;">Mode: Translate</button>
+          <button id="reset-object-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px; display: none;">Reset Object</button>
+          <button id="reset-scene-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Reset Scene</button>
+          <button id="reset-camera-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Reset Camera View</button>
+          <button id="load-file-btn" class="primary-btn" style="background-color: #4b5563; margin-bottom: 8px;">Load Local File (.ply)</button>
+          <input type="file" id="file-input" accept=".ply,.spz,.splat" style="display: none;">
+          <button id="enter-vr-btn" class="primary-btn" disabled>VR Mode (Coming Soon)</button>
+
+          <!-- Scene Rotation Alignment -->
+          <div class="scene-align-panel" style="border-top: 1px solid rgba(255, 255, 255, 0.1); margin-top: 12px; padding-top: 12px;">
+            <p style="font-size: 0.8rem; color: #cbd5e1; margin: 0 0 8px 0; font-weight: 500;">Rotate Scene</p>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+              <button id="rot-x-plus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">X +90°</button>
+              <button id="rot-x-minus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">X -90°</button>
+              <button id="rot-y-plus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Y +90°</button>
+              <button id="rot-y-minus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Y -90°</button>
+              <button id="rot-z-plus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Z +90°</button>
+              <button id="rot-z-minus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Z -90°</button>
+            </div>
+            <button id="confirm-align-btn" class="primary-btn" style="background-color: #10b981; margin-top: 8px; width: 100%; padding: 6px; font-size: 0.8rem;">Confirm Alignment</button>
+          </div>
+          </div>
           <button id="reset-camera-btn" class="primary-btn">Reset Camera View</button>
           <button id="reset-scene-btn" class="primary-btn">Reset Entire Scene</button>
           <button id="load-file-btn" class="primary-btn btn-amber">Load Local File (.ply)</button>
@@ -466,6 +504,44 @@
       </h2>
       <div id="scene-graph-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px;">
          <!-- Populated dynamically -->
+      </div>
+
+      <!-- Custom Mesh Placer Panel -->
+      <div id="custom-mesh-panel" class="glass-panel" style="display: none; position: absolute; top: 20px; right: 20px; width: 300px; z-index: 100; max-height: 90vh; overflow-y: auto;">
+        <h2 style="margin-top: 0; font-size: 1.2rem; color: white;">Custom Colliders</h2>
+        
+        <p style="font-size: 0.8rem; color: #cbd5e1; margin-bottom: 12px;">Add custom collision shapes to block the camera.</p>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px;">
+          <button id="add-wall-btn" class="primary-btn" style="margin: 0; font-size: 0.8rem; padding: 6px;">+ Wall (Rect)</button>
+          <button id="add-circle-btn" class="primary-btn" style="margin: 0; font-size: 0.8rem; padding: 6px;">+ Circle (Disk)</button>
+          <button id="add-box-btn" class="primary-btn" style="margin: 0; font-size: 0.8rem; padding: 6px;">+ Box</button>
+          <button id="add-oval-btn" class="primary-btn" style="margin: 0; font-size: 0.8rem; padding: 6px;">+ Oval (Sphere)</button>
+        </div>
+
+        <div style="margin-bottom: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+          <label style="color: white; font-size: 0.85rem; display: flex; align-items: center; cursor: pointer;">
+            <input type="checkbox" id="toggle-custom-mesh-visibility" checked style="margin-right: 8px;"> Show Custom Colliders
+          </label>
+        </div>
+
+        <div style="margin-bottom: 10px; display: flex; gap: 4px;">
+          <button id="custom-mesh-translate" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem; background-color: #2563eb;">Move</button>
+          <button id="custom-mesh-rotate" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Rotate</button>
+          <button id="custom-mesh-scale" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Scale</button>
+        </div>
+
+        <div id="custom-mesh-list" style="max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 5px;">
+          <p style="font-size: 0.8rem; color: #9ca3af; text-align: center; margin: 5px 0;">No custom colliders added.</p>
+        </div>
+
+        <div id="crop-actions" style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; display: none;">
+          <label style="color: white; font-size: 0.85rem; display: block; margin-bottom: 5px; text-align: center;">✂️ Crop Splat Cloud (with Box):</label>
+          <div style="display: flex; gap: 8px;">
+            <button id="crop-inside-btn" class="primary-btn" style="background-color: #ef4444; margin: 0; font-size: 0.8rem; padding: 6px; flex: 1;">Crop Inside</button>
+            <button id="crop-outside-btn" class="primary-btn" style="background-color: #3b82f6; margin: 0; font-size: 0.8rem; padding: 6px; flex: 1;">Crop Outside</button>
+          </div>
+        </div>
       </div>
     </div>
 

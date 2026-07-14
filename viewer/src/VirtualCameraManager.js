@@ -1245,7 +1245,8 @@ export class VirtualCameraManager {
             }
 
             this.statusText.innerText = "Running object detection...";
-            const res = await fetch(`http://${window.location.hostname}:8000/segment-view`, {
+            const host = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
+            const res = await fetch(`http://${host}:8000/segment-view`, {
                 method: 'POST',
                 body: formData
             });
