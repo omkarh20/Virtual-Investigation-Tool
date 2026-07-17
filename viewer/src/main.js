@@ -108,8 +108,6 @@ function initRenderer() {
       }
     });
   }
-        });
-    }
 
     const resetCameraBtn = document.getElementById('reset-camera-btn');
     if (resetCameraBtn) {
