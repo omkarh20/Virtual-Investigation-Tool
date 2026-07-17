@@ -12,15 +12,17 @@
 
 import { router } from './router.js';
 
-const BACKEND_URL = `http://${window.location.hostname}:8000`;
-const BACKEND_WS  = `ws://${window.location.hostname}:8000`;
+const host = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
+const BACKEND_URL = `http://${host}:8000`;
+const BACKEND_WS  = `ws://${host}:8000`;
 
 const STEPS = [
-    { id: 1, label: 'COLMAP' },
-    { id: 2, label: 'COLMAP Dense', optional: true },
-    { id: 3, label: '3DGS Training' },
-    { id: 4, label: 'Segmentation' },
-    { id: 5, label: 'VR Export' },
+    { id: 1, label: 'Preparing Images' },
+    { id: 2, label: 'COLMAP' },
+    { id: 3, label: 'COLMAP Dense', optional: true },
+    { id: 4, label: '3DGS Training' },
+    { id: 5, label: 'Segmentation & Meshing' },
+    { id: 6, label: 'VR Export' },
 ];
 
 export function initPipelinePage() {
@@ -291,15 +293,18 @@ export function initPipelinePage() {
         router.goHome();
     });
 
-    if (viewBtn) viewBtn.addEventListener('click', () => {
-        if (currentJobId && nextPhaseLabel && nextPhaseLabel.textContent.includes('Align in Renderer')) {
-            window.location.hash = `#/renderer?align=${currentJobId}`;
-        } else if (currentJobId && nextPhaseLabel && nextPhaseLabel.textContent.includes('Virtual Camera')) {
-            window.location.hash = `#/renderer?vcam=${currentJobId}`;
-        } else {
-            router.goRenderer();
+      if (viewBtn) viewBtn.addEventListener('click', () => {
+        if (currentJobId && currentJobId !== 'new') {
+            sessionStorage.setItem('vit_manifest_url', `${BACKEND_URL}/jobs/${currentJobId}/vr-assets/manifest.json`);
         }
-    });
+        if (currentJobId && nextPhaseLabel && nextPhaseLabel.textContent.includes('Align in Renderer')) {
+          window.location.hash = `#/renderer?align=${currentJobId}`;
+        } else if (currentJobId && nextPhaseLabel && nextPhaseLabel.textContent.includes('Virtual Camera')) {
+          window.location.hash = `#/renderer?vcam=${currentJobId}`;
+        } else {
+          router.goRenderer();
+        }
+      });
 
     // Toggle Dense visibility in UI
     if (cfgDense) {
@@ -671,6 +676,20 @@ export function initPipelinePage() {
             if (phaseSummary) phaseSummary.innerHTML = `<strong style="color:#f87171">Phase failed: ${msg.error || 'Unknown error'}</strong> Adjust settings below and retry.`;
             if (phaseControl) phaseControl.style.display = 'flex';
             fetchAndRenderTree();
+        } else if (msg.type === 'step_end') {
+            markStep(msg.step, 'done', 100);
+            appendLog(`✓ Step ${msg.step} complete.`);
+            fetchAndRenderTree();
+            if (msg.step === 5) {
+                markAllDone();
+                appendLog('✓ Pipeline complete.');
+                if (viewBtn) viewBtn.disabled = false;
+                if (cancelArea) cancelArea.style.display = 'none';
+                if (phaseControl) phaseControl.style.display = 'none';
+                if (msg.manifest_url) {
+                    sessionStorage.setItem('vit_manifest_url', msg.manifest_url);
+                }
+            }
         } else if (msg.type === 'done') {
             markAllDone();
             appendLog('✓ Pipeline complete.');
@@ -807,8 +826,7 @@ export function initPipelinePage() {
         resultsPanel.style.display = 'block';
         resultsList.innerHTML = '';
         
-        // Exclude dummy segmentation phase 5 for downloads
-        const downloadable = completedPhases.filter(p => p < 5).sort();
+        const downloadable = [...completedPhases].sort();
         
         downloadable.forEach(pid => {
             const step = STEPS.find(s => s.id === pid);
@@ -854,6 +872,22 @@ export function initPipelinePage() {
                 resultsList.appendChild(btn);
             }
         });
+
+        if (completedPhases.includes(5)) {
+            const exportBtn = document.createElement('a');
+            exportBtn.href = `${BACKEND_URL}/jobs/${currentJobId}/export-engine`;
+            exportBtn.className = 'btn btn-primary';
+            exportBtn.innerHTML = `📦 Export Unity / Unreal Bundle`;
+            exportBtn.style.background = 'linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%)';
+            exportBtn.style.border = 'none';
+            exportBtn.style.color = 'white';
+            exportBtn.style.fontWeight = 'bold';
+            exportBtn.style.padding = '10px 20px';
+            exportBtn.style.marginTop = '10px';
+            exportBtn.style.display = 'inline-block';
+            exportBtn.style.borderRadius = '6px';
+            resultsList.appendChild(exportBtn);
+        }
     }
 
     // ── Step UI helpers ────────────────────────────────────────────────────────

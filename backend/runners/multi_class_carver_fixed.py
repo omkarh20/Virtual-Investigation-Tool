@@ -19,64 +19,87 @@ import numpy as np
 class PLYReader:
     def __init__(self, path):
         self.path = path
-        self.format = None
+        self.format = ""
         self.elements = {}
         self.data = {}
         self.parse()
 
     def parse(self):
-        with open(self.path, "rb") as f:
-            header_lines = []
-            while True:
-                line = f.readline().decode("utf-8").strip()
-                header_lines.append(line)
-                if line == "end_header":
-                    break
-
-            current_elem = None
-            for line in header_lines:
-                if line.startswith("format"):
-                    self.format = line.split()[1]
-                elif line.startswith("element"):
-                    parts = line.split()
-                    current_elem = parts[1]
-                    count = int(parts[2])
-                    self.elements[current_elem] = {"count": count, "properties": []}
-                elif line.startswith("property"):
-                    parts = line.split()
-                    dtype = parts[1]
-                    name = parts[2]
-                    self.elements[current_elem]["properties"].append((name, dtype))
-
-            if "binary" in self.format:
-                self._parse_binary(f)
-
-    def _parse_binary(self, f):
-        is_little_endian = "little_endian" in self.format
-        endian = "<" if is_little_endian else ">"
-
+        from plyfile import PlyData
+        plydata = PlyData.read(self.path)
+        
+        if plydata.text:
+            self.format = "ascii"
+        else:
+            self.format = "binary_little_endian" if plydata.byte_order == '<' else "binary_big_endian"
+        for elem in plydata.elements:
+            self.elements[elem.name] = {
+                "count": elem.count,
+                "properties": [(prop.name, prop.val_dtype) for prop in elem.properties]
+            }
+            
         for elem_name, elem_info in self.elements.items():
             self.data[elem_name] = {}
-            for name, _ in elem_info["properties"]:
-                self.data[elem_name][name] = []
-
-            for _ in range(elem_info["count"]):
-                for name, dtype in elem_info["properties"]:
-                    if dtype == "double":
-                        val = struct.unpack(endian + "d", f.read(8))[0]
-                    elif dtype == "float":
-                        val = struct.unpack(endian + "f", f.read(4))[0]
-                    elif dtype == "uint":
-                        val = struct.unpack(endian + "I", f.read(4))[0]
-                    elif dtype == "int":
-                        val = struct.unpack(endian + "i", f.read(4))[0]
-                    elif dtype == "uchar":
-                        val = struct.unpack(endian + "B", f.read(1))[0]
-                    elif dtype == "char":
-                        val = struct.unpack(endian + "b", f.read(1))[0]
-                    else:
-                        continue
-                    self.data[elem_name][name].append(val)
+            
+        vertex = plydata['vertex']
+        
+        if 'packed_position' in vertex.data.dtype.names:
+            print("[*] PLYReader: Detected compressed 3DGS PLY format. Unpacking...")
+            packed_positions = np.array(vertex['packed_position'])
+            
+            chunk = plydata['chunk']
+            chunk_min_x = np.array(chunk['min_x'])
+            chunk_max_x = np.array(chunk['max_x'])
+            chunk_min_y = np.array(chunk['min_y'])
+            chunk_max_y = np.array(chunk['max_y'])
+            chunk_min_z = np.array(chunk['min_z'])
+            chunk_max_z = np.array(chunk['max_z'])
+            
+            chunk_idx = np.clip(np.arange(len(packed_positions)) // 256, 0, len(chunk_min_x) - 1)
+            
+            min_x = chunk_min_x[chunk_idx]
+            max_x = chunk_max_x[chunk_idx]
+            min_y = chunk_min_y[chunk_idx]
+            max_y = chunk_max_y[chunk_idx]
+            min_z = chunk_min_z[chunk_idx]
+            max_z = chunk_max_z[chunk_idx]
+            
+            x_norm = (packed_positions >> 21) & 0x7FF
+            y_norm = (packed_positions >> 11) & 0x3FF
+            z_norm = packed_positions & 0x7FF
+            
+            x = x_norm / 2047.0 * (max_x - min_x) + min_x
+            y = y_norm / 1023.0 * (max_y - min_y) + min_y
+            z = z_norm / 2047.0 * (max_z - min_z) + min_z
+            
+            self.data['vertex']['x'] = x
+            self.data['vertex']['y'] = y
+            self.data['vertex']['z'] = z
+            
+            if 'packed_color' in vertex.data.dtype.names:
+                packed_colors = np.array(vertex['packed_color'])
+                opacity = (packed_colors & 0xFF) / 255.0
+                self.data['vertex']['opacity'] = opacity
+                
+                SH_C0 = 0.28209479177387814
+                r_norm = (packed_colors >> 24) & 0xFF
+                g_norm = (packed_colors >> 16) & 0xFF
+                b_norm = (packed_colors >> 8) & 0xFF
+                
+                self.data['vertex']['f_dc_0'] = (r_norm / 255.0 - 0.5) / SH_C0
+                self.data['vertex']['f_dc_1'] = (g_norm / 255.0 - 0.5) / SH_C0
+                self.data['vertex']['f_dc_2'] = (b_norm / 255.0 - 0.5) / SH_C0
+        else:
+            # Uncompressed format: copy properties
+            for prop_name, _ in self.elements['vertex']['properties']:
+                self.data['vertex'][prop_name] = np.array(vertex[prop_name])
+                
+            for elem_name, elem_info in self.elements.items():
+                if elem_name == 'vertex':
+                    continue
+                elem_data = plydata[elem_name]
+                for prop_name, _ in elem_info['properties']:
+                    self.data[elem_name][prop_name] = np.array(elem_data[prop_name])
 
 
 class PLYWriter:

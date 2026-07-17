@@ -6,18 +6,24 @@ import glob
 import zipfile
 import json
 import re
+import warnings
 from typing import Any
+from pydantic import BaseModel
+
+# Suppress harmless model registry overwrite warnings from segment_anything_hq
+warnings.filterwarnings("ignore", category=UserWarning, module="segment_anything_hq")
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module=".*tiny_vit_sam.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="segment_anything.*")
 
-from runners.colmap_sparse import run_colmap_pipeline
+from runners.colmap_sparse import run_colmap_sparse, run_colmap_pipeline
 from runners.colmap_dense import run_colmap_dense
 from runners.train_3dgs import run_3dgs_training
 from vr_exporter import process_vr_export
+from runners.mesh_pipeline import run_unsegmented_mesh_pipeline, run_mesh_segmentation_pipeline
 
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Form
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -107,13 +113,15 @@ async def push(job_id: str, msg: dict) -> None:
 
 from runners.run_segmentation import run_segmentation
 from runners.run_vr_export import run_vr_export
+from runners.preprocessor import process_inputs
 
 PHASES = [
-    {"id": 1, "label": "COLMAP",              "runner": run_colmap_pipeline},
-    {"id": 2, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
-    {"id": 3, "label": "3DGS Training",       "runner": run_3dgs_training},
-    {"id": 4, "label": "Segmentation",        "runner": run_segmentation},
-    {"id": 5, "label": "VR Export",           "runner": run_vr_export},
+    {"id": 1, "label": "Preparing Images",   "runner": process_inputs},
+    {"id": 2, "label": "COLMAP",              "runner": run_colmap_sparse},
+    {"id": 3, "label": "COLMAP Dense",        "runner": run_colmap_dense, "optional": True},
+    {"id": 4, "label": "3DGS Training",       "runner": run_3dgs_training},
+    {"id": 5, "label": "Segmentation & Meshing", "runner": run_mesh_segmentation_pipeline},
+    {"id": 6, "label": "VR Export",           "runner": run_vr_export},
 ]
 
 async def run_pipeline_orchestrator(job_id: str, end_phase: int = None):
@@ -584,13 +592,261 @@ async def download_phase(job_id: str, phase_id: int):
         return FileResponse(zip_path, media_type="application/zip", filename=f"colmap_phase{phase_id}.zip")
         
     elif phase_id == 4:
-        # Return labelled PLY
+        # Return labelled PLY (from HEAD) or regular PLY (from mesh) depending on what exists
         ply_path = os.path.join(job_dir, "segmentation", "labelled_point_cloud.ply")
         if not os.path.exists(ply_path):
-            return JSONResponse({"error": "No labelled .ply found"}, status_code=404)
+            ply_files = glob.glob(os.path.join(job_dir, "output", "point_cloud", "iteration_*", "point_cloud.ply"))
+            if ply_files:
+                ply_files.sort(key=os.path.getmtime, reverse=True)
+                return FileResponse(ply_files[0], media_type="application/octet-stream", filename="model.ply")
+            return JSONResponse({"error": "No .ply found"}, status_code=404)
         return FileResponse(ply_path, media_type="application/octet-stream", filename="labelled_point_cloud.ply")
+
+    elif phase_id == 5:
+        # Return segments zip
+        assets_dir = os.path.join(job_dir, "mesh-pipeline-assets")
+        if not os.path.exists(assets_dir):
+            return JSONResponse({"error": "No mesh assets found"}, status_code=404)
+        zip_path = os.path.join(job_dir, "phase5_meshing_assets.zip")
+        shutil.make_archive(zip_path[:-4], 'zip', assets_dir)
+        return FileResponse(zip_path, media_type="application/zip", filename="meshing_assets.zip")
         
     return JSONResponse({"error": "Download not supported for this phase"}, status_code=400)
+
+
+@app.get("/jobs/{job_id}/export-engine")
+async def export_engine(job_id: str):
+    import shutil
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    vr_assets_dir = os.path.join(job_dir, "vr-assets")
+    manifest_path = os.path.join(vr_assets_dir, "manifest.json")
+    
+    if not os.path.exists(manifest_path):
+        return JSONResponse({"error": "VR Assets manifest not found. Did you run Phase 5 successfully?"}, status_code=404)
+        
+    try:
+        with open(manifest_path, "r") as f:
+            manifest = json.load(f)
+            
+        export_dir = os.path.join(job_dir, "engine-export")
+        os.makedirs(os.path.join(export_dir, "Assets", "Splats"), exist_ok=True)
+        os.makedirs(os.path.join(export_dir, "Assets", "Colliders"), exist_ok=True)
+        
+        # Copy the files
+        layout_segments = []
+        
+        # Room Background
+        shutil.copy(
+            os.path.join(vr_assets_dir, "background.ply"),
+            os.path.join(export_dir, "Assets", "Splats", "background.ply")
+        )
+        master_mesh_src = os.path.join(job_dir, "mesh-pipeline-assets", "master_scene_mesh.obj")
+        if os.path.exists(master_mesh_src):
+            shutil.copy(master_mesh_src, os.path.join(export_dir, "Assets", "Colliders", "scene_collision.obj"))
+        
+        # Process manifest segments
+        for seg in manifest.get("segments", []):
+            label = seg["label"]
+            file_name = seg["file"]
+            collision_file = seg["collision"]
+            
+            base_name = os.path.splitext(file_name)[0]
+            
+            layout_seg = {
+                "name": label,
+                "splat_file": f"Assets/Splats/{file_name}",
+                "collider_file": f"Assets/Colliders/{base_name}.obj",
+                "position": seg.get("centroid", [0, 0, 0]),
+                "rotation": [0, 0, 0, 1],
+                "scale": [1, 1, 1],
+                "movable": seg.get("movable", False)
+            }
+            layout_segments.append(layout_seg)
+            
+            # Copy PLY file
+            shplat_src = os.path.join(vr_assets_dir, file_name)
+            if os.path.exists(shplat_src):
+                shutil.copy(shplat_src, os.path.join(export_dir, "Assets", "Splats", file_name))
+                
+            # Copy OBJ mesh file (source is mesh-pipeline-assets/segments/obj_name_mesh.obj)
+            if label != "background":
+                obj_src = os.path.join(job_dir, "mesh-pipeline-assets", "segments", f"{label}_mesh.obj")
+                if os.path.exists(obj_src):
+                    shutil.copy(obj_src, os.path.join(export_dir, "Assets", "Colliders", f"{label}.obj"))
+                    
+        # Write scene_layout.json
+        layout = {
+            "scene_id": job_id,
+            "segments": layout_segments
+        }
+        with open(os.path.join(export_dir, "scene_layout.json"), "w") as f:
+            json.dump(layout, f, indent=2)
+            
+        # Write Unity importer script
+        unity_script = """#if UNITY_EDITOR
+using UnityEngine;
+using UnityEditor;
+using System.IO;
+using System.Collections.Generic;
+
+public class SplatSceneImporter : EditorWindow
+{
+    private string jsonPath = "Assets/scene_layout.json";
+
+    [MenuItem("Tools/VIT Splat Scene Importer")]
+    public static void ShowWindow()
+    {
+        GetWindow<SplatSceneImporter>("Splat Importer");
+    }
+
+    private void OnGUI()
+    {
+        GUILayout.Label("Import VIT Engine Assets", EditorStyles.boldLabel);
+        jsonPath = EditorGUILayout.TextField("Scene Layout JSON Path", jsonPath);
+
+        if (GUILayout.Button("Import Scene"))
+        {
+            ImportScene();
+        }
+    }
+
+    private void ImportScene()
+    {
+        if (!File.Exists(jsonPath))
+        {
+            EditorUtility.DisplayDialog("Error", "JSON file not found at: " + jsonPath, "OK");
+            return;
+        }
+
+        string jsonText = File.ReadAllText(jsonPath);
+        SceneData sceneData = JsonUtility.FromJson<SceneData>(jsonText);
+
+        GameObject root = new GameObject("SplatScene_" + sceneData.scene_id);
+
+        foreach (var seg in sceneData.segments)
+        {
+            GameObject segObj = new GameObject(seg.name);
+            segObj.transform.parent = root.transform;
+
+            segObj.transform.position = new Vector3(seg.position[0], seg.position[1], seg.position[2]);
+            segObj.transform.rotation = new Quaternion(seg.rotation[0], seg.rotation[1], seg.rotation[2], seg.rotation[3]);
+            segObj.transform.localScale = new Vector3(seg.scale[0], seg.scale[1], seg.scale[2]);
+
+            if (!string.IsNullOrEmpty(seg.collider_file))
+            {
+                Mesh loadedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(seg.collider_file);
+                if (loadedMesh == null)
+                {
+                    string fileName = Path.GetFileName(seg.collider_file);
+                    string[] guids = AssetDatabase.FindAssets(Path.GetFileNameWithoutExtension(fileName));
+                    if (guids.Length > 0)
+                    {
+                        string path = AssetDatabase.GUIDToAssetPath(guids[0]);
+                        loadedMesh = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+                    }
+                }
+
+                if (loadedMesh != null)
+                {
+                    MeshCollider collider = segObj.AddComponent<MeshCollider>();
+                    collider.sharedMesh = loadedMesh;
+                    collider.convex = seg.movable;
+                    
+                    MeshFilter filter = segObj.AddComponent<MeshFilter>();
+                    filter.sharedMesh = loadedMesh;
+                    MeshRenderer renderer = segObj.AddComponent<MeshRenderer>();
+                    renderer.sharedMaterial = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Material.mat");
+                    renderer.enabled = false;
+                }
+            }
+
+            Debug.Log($"Imported segment '{seg.name}'. Visual Splat PLY: {seg.splat_file}");
+        }
+
+        EditorUtility.DisplayDialog("Success", "Scene imported successfully!", "OK");
+    }
+
+    [System.Serializable]
+    public class SceneData
+    {
+        public string scene_id;
+        public List<SegmentData> segments;
+    }
+
+    [System.Serializable]
+    public class SegmentData
+    {
+        public string name;
+        public string splat_file;
+        public string collider_file;
+        public float[] position;
+        public float[] rotation;
+        public float[] scale;
+        public bool movable;
+    }
+}
+#endif
+"""
+        with open(os.path.join(export_dir, "splats_importer_unity.cs"), "w") as f:
+            f.write(unity_script)
+            
+        # Write README.md
+        readme = f"""# VIT Game Engine Export Package
+
+This package contains segmented Gaussian Splat visual assets and reconstructed low-poly meshes designed for Unity and Unreal Engine.
+
+## Package Contents
+* `Assets/Splats/` - Contains the isolated `.ply` Gaussian Splat files for each room segment and background.
+* `Assets/Colliders/` - Contains the simplified `.obj` collision meshes reconstructed via Poisson Surface Reconstruction.
+* `scene_layout.json` - Positional layout data mapping each segment's centroid, rotation, and file paths.
+* `splats_importer_unity.cs` - Unity Editor automation script.
+
+---
+
+## 1. Unity Integration Guide
+
+### Requirements
+Ensure you have a Gaussian Splat rendering plugin installed in your project, such as:
+* [Keijiro Takahashi's PicoSplat](https://github.com/keijiro/PicoSplat) or standard Splat package.
+
+### How to Import
+1. Copy the `Assets/` directory contents directly into your Unity project's `Assets` folder.
+2. Put `splats_importer_unity.cs` inside any folder named `Editor` (e.g. `Assets/Editor/SplatSceneImporter.cs`).
+3. In Unity, select **Tools > VIT Splat Scene Importer** from the top menu bar.
+4. Keep the JSON path as `Assets/scene_layout.json` and click **Import Scene**.
+5. The script will automatically instantiate GameObjects for all segments, apply the `.obj` meshes to `MeshCollider` components, and disable their `MeshRenderer` so they act as invisible colliders.
+6. Attach a Splat renderer/Visual Component pointing to the corresponding `.ply` file in `Assets/Splats/` for each segment GameObject.
+
+---
+
+## 2. Unreal Engine Integration Guide
+
+### Requirements
+Ensure you have a 3DGS plugin installed, such as:
+* [Luma Unreal Engine Plugin](https://lumalabs.ai/luma-web-ue) or equivalent splat-rendering plugins.
+
+### How to Import
+1. Import all `.obj` files in `Assets/Colliders/` into the Unreal Content Browser as **Static Meshes**.
+   * In the Import settings, check **Generate Lightmap UVs** and **Enable Collision**.
+   * For complex room walls, set **Collision Complexity** to **Use Complex Collision as Simple** inside the Static Mesh Editor.
+2. Drag the static meshes into the level and set their positions based on the centroids in `scene_layout.json`.
+3. In the Details panel, uncheck **Visible** (or check **Hidden in Game**) for the static meshes so they act as invisible collision geometry.
+4. Import the visual `.ply` files using your 3DGS plugin and place them at the exact same location coordinates as the collision proxies to render the visuals.
+"""
+        with open(os.path.join(export_dir, "README.md"), "w") as f:
+            f.write(readme)
+            
+        zip_path = os.path.join(job_dir, "engine_export.zip")
+        shutil.make_archive(zip_path[:-4], 'zip', export_dir)
+        
+        shutil.rmtree(export_dir, ignore_errors=True)
+        
+        return FileResponse(zip_path, media_type="application/zip", filename=f"VIT_Engine_Export_{job_id[:8]}.zip")
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.websocket("/progress/{job_id}")
@@ -702,6 +958,235 @@ async def export_vr(body: dict) -> JSONResponse:
     except Exception as e:
         print(f"[Error] VR Export failed: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/run-mesh-pipeline")
+async def run_mesh_pipeline(body: dict) -> JSONResponse:
+    job_id = body.get("job_id")
+    if not job_id or job_id not in jobs:
+        return JSONResponse({"error": "Unknown job_id"}, status_code=404)
+
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    ply_files = glob.glob(os.path.join(job_dir, "output", "point_cloud", "iteration_*", "point_cloud.ply"))
+    if not ply_files:
+        filename = jobs[job_id].get("filename", "")
+        ply_path = os.path.join(job_dir, "input", filename)
+        if not os.path.exists(ply_path) or not ply_path.endswith(".ply"):
+            return JSONResponse({"error": "No trained 3DGS point cloud (.ply) or input .ply found for this job"}, status_code=404)
+    else:
+        ply_files.sort(key=os.path.getmtime, reverse=True)
+        ply_path = ply_files[0]
+
+    output_dir = os.path.join(job_dir, "mesh-pipeline-assets")
+    os.makedirs(output_dir, exist_ok=True)
+
+    targets = body.get("targets", None)
+    
+    # Run in a background executor thread to avoid blocking FastAPI
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, 
+            run_unsegmented_mesh_pipeline, 
+            ply_path, 
+            output_dir, 
+            targets
+        )
+        return JSONResponse({
+            "status": "success",
+            "message": "Mesh pipeline executed successfully!",
+            "result": result
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"status": "failed", "error": str(e)}, status_code=500)
+
+
+@app.post("/mesh-ply")
+async def mesh_ply(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    if not file.filename.endswith(".ply"):
+        return JSONResponse({"error": "Only .ply files are supported"}, status_code=400)
+        
+    import uuid
+    job_id = "ply_" + str(uuid.uuid4())[:8]
+    job_dir_root = os.path.join(JOBS_DIR, job_id)
+    
+    input_dir = os.path.join(job_dir_root, "input")
+    os.makedirs(input_dir, exist_ok=True)
+    file_path = os.path.join(input_dir, file.filename)
+    
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+        
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "running",
+        "current_phase": 5,
+        "completed_phases": [],
+        "filename": file.filename,
+        "config": {"filename": file.filename}
+    }
+    save_job_metadata(job_id)
+    
+    if job_id not in progress_queues:
+        progress_queues[job_id] = asyncio.Queue()
+        
+    async def run_pipeline_bg():
+        try:
+            async def push_ws_callback(msg):
+                await push(job_id, msg)
+                
+            await run_mesh_segmentation_pipeline(job_id, job_dir_root, {"filename": file.filename, "only_mesh": True}, push_ws_callback)
+            
+            jobs[job_id]["status"] = "done"
+            jobs[job_id]["completed_phases"] = [5]
+            save_job_metadata(job_id)
+            
+            await push(job_id, {
+                "type": "step_end", 
+                "step": 5, 
+                "progress": 100, 
+                "text": "complete", 
+                "manifest_url": f"http://localhost:8000/jobs/{job_id}/vr-assets/manifest.json"
+            })
+            await push(job_id, None)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await push(job_id, {"type": "log", "step": 5, "progress": 100, "text": f"Error during processing: {str(e)}"})
+            await push(job_id, None)
+            
+    background_tasks.add_task(run_pipeline_bg)
+    
+    return JSONResponse({
+        "status": "processing",
+        "job_id": job_id
+    })
+
+
+class CropRequest(BaseModel):
+    job_id: str
+    box_center: list[float]
+    box_rotation: list[float]
+    box_scale: list[float]
+    crop_inside: bool = True
+
+@app.post("/crop-ply")
+async def crop_ply(req: CropRequest):
+    try:
+        job_id = req.job_id
+        job_dir = os.path.join(JOBS_DIR, job_id)
+        if not os.path.exists(job_dir):
+            return JSONResponse({"status": "failed", "error": "Job not found"}, status_code=404)
+            
+        vr_assets_dir = os.path.join(job_dir, "vr-assets")
+        ply_path = os.path.join(vr_assets_dir, "background.ply")
+        if not os.path.exists(ply_path):
+            # Fallback to older job path
+            ply_path = os.path.join(job_dir, "input/vr-assets/background.ply")
+            vr_assets_dir = os.path.join(job_dir, "input/vr-assets")
+            if not os.path.exists(ply_path):
+                return JSONResponse({"status": "failed", "error": "background.ply not found"}, status_code=404)
+
+        from plyfile import PlyData, PlyElement
+        plydata = PlyData.read(ply_path)
+        vertex = plydata['vertex']
+        
+        # Unpack positions if compressed
+        if 'packed_position' in vertex.data.dtype.names:
+            packed_positions = np.array(vertex['packed_position'])
+            chunk = plydata['chunk']
+            chunk_min_x = np.array(chunk['min_x'])
+            chunk_max_x = np.array(chunk['max_x'])
+            chunk_min_y = np.array(chunk['min_y'])
+            chunk_max_y = np.array(chunk['max_y'])
+            chunk_min_z = np.array(chunk['min_z'])
+            chunk_max_z = np.array(chunk['max_z'])
+            
+            chunk_idx = np.clip(np.arange(len(packed_positions)) // 256, 0, len(chunk_min_x) - 1)
+            
+            min_x = chunk_min_x[chunk_idx]
+            max_x = chunk_max_x[chunk_idx]
+            min_y = chunk_min_y[chunk_idx]
+            max_y = chunk_max_y[chunk_idx]
+            min_z = chunk_min_z[chunk_idx]
+            max_z = chunk_max_z[chunk_idx]
+            
+            x_norm = (packed_positions >> 21) & 0x7FF
+            y_norm = (packed_positions >> 11) & 0x3FF
+            z_norm = packed_positions & 0x7FF
+            
+            vx = x_norm / 2047.0 * (max_x - min_x) + min_x
+            vy = y_norm / 1023.0 * (max_y - min_y) + min_y
+            vz = z_norm / 2047.0 * (max_z - min_z) + min_z
+        else:
+            vx = np.array(vertex['x'])
+            vy = np.array(vertex['y'])
+            vz = np.array(vertex['z'])
+
+        # Convert to Three.js coordinates (Y and Z inverted)
+        pts_three = np.vstack([vx, -vy, -vz]).T
+
+        # Get box center and scale
+        C = np.array(req.box_center)
+        S = np.array(req.box_scale)
+        
+        # Quaternion to rotation matrix
+        qx, qy, qz, qw = req.box_rotation
+        R = np.array([
+            [1 - 2*qy*qy - 2*qz*qz,     2*qx*qy - 2*qz*qw,       2*qx*qz + 2*qy*qw],
+            [2*qx*qy + 2*qz*qw,         1 - 2*qx*qx - 2*qz*qz,   2*qy*qz - 2*qx*qw],
+            [2*qx*qz - 2*qy*qw,         2*qy*qz + 2*qx*qw,       1 - 2*qx*qx - 2*qy*qy]
+        ])
+        
+        # Local space: p_local = (p_three - C) @ R
+        pts_local = (pts_three - C) @ R
+        
+        # Check if inside bounds
+        inside = (np.abs(pts_local[:, 0]) <= S[0] / 2.0) & \
+                 (np.abs(pts_local[:, 1]) <= S[1] / 2.0) & \
+                 (np.abs(pts_local[:, 2]) <= S[2] / 2.0)
+
+        mask = ~inside if req.crop_inside else inside
+        
+        filtered_vertex = vertex.data[mask]
+        
+        new_elements = []
+        for elem in plydata.elements:
+            if elem.name == 'vertex':
+                new_elements.append(PlyElement.describe(filtered_vertex, 'vertex'))
+            else:
+                new_elements.append(elem)
+
+        # Write to vr-assets/background.ply
+        PlyData(new_elements, text=plydata.text, byte_order=plydata.byte_order).write(ply_path)
+        
+        # Also write to input folder if it exists
+        input_ply_path = os.path.join(job_dir, "input/input/3dgs_compressed.ply")
+        if os.path.exists(input_ply_path):
+            PlyData(new_elements, text=plydata.text, byte_order=plydata.byte_order).write(input_ply_path)
+
+        # Re-run Poisson mesh reconstruction to update room collision GLB
+        from runners.mesh_pipeline import extract_mesh
+        import trimesh
+        
+        master_mesh_path = os.path.join(job_dir, "input/mesh-pipeline-assets/master_scene_mesh.obj")
+        extract_mesh(input_ply_path if os.path.exists(input_ply_path) else ply_path, master_mesh_path)
+        
+        scene_mesh = trimesh.load(master_mesh_path)
+        if isinstance(scene_mesh, trimesh.Scene):
+            scene_mesh = scene_mesh.to_mesh()
+        
+        scene_glb_path = os.path.join(vr_assets_dir, "scene_collision.glb")
+        scene_mesh.export(scene_glb_path)
+        
+        return {"status": "success", "retained_points": int(np.sum(mask))}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"status": "failed", "error": str(e)}, status_code=500)
+
 
 def get_directory_tree(path: str) -> dict:
     tree = {"name": os.path.basename(path), "type": "directory", "children": []}

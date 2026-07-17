@@ -9,7 +9,8 @@
 
 import { router } from './router.js';
 
-const BACKEND = `http://${window.location.hostname}:8000`;
+const host = window.location.hostname === 'localhost' ? '127.0.0.1' : window.location.hostname;
+const BACKEND = `http://${host}:8000`;
 
 export function initHomePage() {
     // ── Element refs ─────────────────────────────────────────────────────────
@@ -17,6 +18,9 @@ export function initHomePage() {
     const skipBtn       = document.getElementById('home-skip-btn');
     const refreshBtn    = document.getElementById('home-refresh-btn');
     const projectsList  = document.getElementById('home-projects-list');
+
+    const inputPly      = document.getElementById('home-input-ply');
+    const uploadStatus  = document.getElementById('home-upload-status');
 
     if (newBtn) {
         newBtn.addEventListener('click', () => {
@@ -26,6 +30,48 @@ export function initHomePage() {
 
     if (skipBtn) {
         skipBtn.addEventListener('click', () => router.goRenderer());
+    }
+
+    if (inputPly) {
+        inputPly.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (!file.name.endsWith('.ply')) {
+                alert('Only .ply files are supported!');
+                return;
+            }
+
+            if (uploadStatus) {
+                uploadStatus.innerText = `Uploading ${file.name}...`;
+                uploadStatus.style.color = '#cbd5e1';
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const res = await fetch(`${BACKEND}/mesh-ply`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!res.ok) {
+                    throw new Error('Upload failed');
+                }
+                const data = await res.json();
+                if (data.job_id) {
+                    if (uploadStatus) uploadStatus.innerText = '';
+                    router.goPipeline(data.job_id);
+                } else {
+                    throw new Error('No job ID returned');
+                }
+            } catch (err) {
+                console.error(err);
+                if (uploadStatus) {
+                    uploadStatus.innerText = `Upload failed: ${err.message}`;
+                    uploadStatus.style.color = '#f87171';
+                }
+            }
+        });
     }
 
     // ── Previous Investigations (placeholder) ─────────────────────────────────

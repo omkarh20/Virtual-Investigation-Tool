@@ -44,14 +44,19 @@
   <!-- ══════════════════════════════════════════════════════════════════ -->
   <div id="page-home" class="page">
     <div class="home-content">
+      <div class="home-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 20px;">
+        <button class="btn btn-primary" id="home-new-btn">+ New Investigation</button>
+        <button class="btn btn-secondary" id="home-skip-btn">Skip to Renderer →</button>
+        <div class="direct-upload-wrapper" style="position: relative; overflow: hidden; display: inline-block;">
+          <button class="btn btn-secondary" id="home-upload-ply-btn">📂 Upload & Mesh PLY</button>
+          <input type="file" id="home-input-ply" accept=".ply" style="position: absolute; font-size: 100px; opacity: 0; right: 0; top: 0; cursor: pointer;" />
+        </div>
+      </div>
+      <p id="home-upload-status" style="margin-top: 10px; font-size: 0.9rem; color: #9ca3af; height: 1.2rem; margin-bottom: 12px;"></p>
 
       <h1 class="home-title">Virtual Investigation Tool</h1>
       <p class="home-subtitle">3D Gaussian Splat reconstruction, segmentation and inspection.</p>
 
-      <div class="home-actions">
-        <button class="btn btn-primary" id="home-new-btn">+ New Investigation</button>
-        <button class="btn btn-secondary" id="home-skip-btn">Skip to Renderer →</button>
-      </div>
 
       <!-- Previous Investigations -->
       <section class="projects-section">
@@ -401,6 +406,13 @@
             <button id="toggle-camera-btn" class="primary-btn half-btn active">Orbit</button>
             <button id="toggle-fly-camera-btn" class="primary-btn half-btn">Fly</button>
           </div>
+          <button id="toggle-grid-btn" class="primary-btn btn-blue" style="margin-bottom: 8px;">Grid: ON</button>
+          <button id="toggle-mesh-btn" class="primary-btn btn-purple" style="margin-bottom: 8px;">Room Mesh: OFF</button>
+          <button id="toggle-splat-btn" class="primary-btn btn-blue" style="margin-bottom: 8px;">Splat Model: ON</button>
+          <button id="toggle-nav-area-btn" class="primary-btn btn-purple" style="margin-bottom: 8px;">Grid Nav: OFF</button>
+
+
+
           <button id="reset-camera-btn" class="primary-btn">Reset Camera View</button>
           <button id="reset-scene-btn" class="primary-btn">Reset Entire Scene</button>
           <button id="load-file-btn" class="primary-btn btn-amber">Load Local File (.ply)</button>
@@ -426,15 +438,66 @@
           <button id="submit-alignment-btn" class="primary-btn btn-green" style="display: none; margin-top: 8px;">Save Edits to Pipeline</button>
           <button id="apply-local-btn" class="primary-btn btn-green" style="display: none; margin-top: 8px;">Apply & Reload</button>
           <button id="export-local-btn" class="primary-btn btn-blue" style="display: none; margin-top: 8px;">Export Local (.ply)</button>
+
+          <!-- Scene Rotation Alignment -->
+          <div class="scene-align-panel" style="border-top: 1px solid rgba(255, 255, 255, 0.1); margin-top: 12px; padding-top: 12px;">
+            <p style="font-size: 0.8rem; color: #cbd5e1; margin: 0 0 8px 0; font-weight: 500;">Rotate Scene</p>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+              <button id="rot-x-plus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">X +90°</button>
+              <button id="rot-x-minus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">X -90°</button>
+              <button id="rot-y-plus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Y +90°</button>
+              <button id="rot-y-minus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Y -90°</button>
+              <button id="rot-z-plus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Z +90°</button>
+              <button id="rot-z-minus" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Z -90°</button>
+            </div>
+            <button id="confirm-align-btn" class="primary-btn btn-green" style="margin-top: 8px; width: 100%; padding: 6px; font-size: 0.8rem;">Confirm Alignment</button>
+          </div>
+
+          <div id="crop-actions" style="margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+            <label style="color: white; font-size: 0.85rem; display: block; margin-bottom: 5px; text-align: center;">✂️ Crop Splat Cloud (with Box):</label>
+            <div style="display: flex; gap: 8px;">
+              <button id="crop-inside-btn" class="primary-btn btn-red" style="margin: 0; font-size: 0.8rem; padding: 6px; flex: 1;">Crop Inside</button>
+              <button id="crop-outside-btn" class="primary-btn btn-blue" style="margin: 0; font-size: 0.8rem; padding: 6px; flex: 1;">Crop Outside</button>
+            </div>
+          </div>
         </div>
 
         <!-- CARD 3: Interaction & Physics -->
         <div class="menu-card" id="card-interaction" style="display: none;">
-          <h3 class="menu-card-title">Interaction</h3>
+          <h3 class="menu-card-title">Interaction & Physics</h3>
           <button id="toggle-interaction-btn" class="primary-btn">Interaction: OFF</button>
           <button id="toggle-hull-btn" class="primary-btn">Hulls: OFF</button>
           <button id="toggle-physics-btn" class="primary-btn">Physics: OFF</button>
+          
+          <button id="toggle-gizmo-mode-btn" class="primary-btn" style="display: none;">Mode: Translate</button>
           <button id="reset-object-btn" class="primary-btn" style="display: none;">Reset Object</button>
+
+          <!-- Custom Colliders -->
+          <div style="border-top: 1px solid rgba(255, 255, 255, 0.1); margin-top: 12px; padding-top: 12px;">
+            <p style="font-size: 0.8rem; color: #cbd5e1; margin: 0 0 8px 0; font-weight: 500;">Add Custom Colliders</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 8px;">
+              <button id="add-wall-btn" class="primary-btn third-btn" style="margin: 0; font-size: 0.75rem; padding: 4px;">Wall</button>
+              <button id="add-circle-btn" class="primary-btn third-btn" style="margin: 0; font-size: 0.75rem; padding: 4px;">Circle</button>
+              <button id="add-box-btn" class="primary-btn third-btn" style="margin: 0; font-size: 0.75rem; padding: 4px;">Box</button>
+              <button id="add-oval-btn" class="primary-btn third-btn" style="margin: 0; font-size: 0.75rem; padding: 4px;">Oval</button>
+            </div>
+
+            <div style="margin-bottom: 8px;">
+              <label style="color: white; font-size: 0.8rem; display: flex; align-items: center; cursor: pointer;">
+                <input type="checkbox" id="toggle-custom-mesh-visibility" checked style="margin-right: 8px;"> Show Custom Colliders
+              </label>
+            </div>
+
+            <div style="margin-bottom: 8px; display: flex; gap: 4px;">
+              <button id="custom-mesh-translate" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem; background-color: #2563eb;">Move</button>
+              <button id="custom-mesh-rotate" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Rotate</button>
+              <button id="custom-mesh-scale" class="align-btn" style="flex: 1; padding: 4px; font-size: 0.75rem;">Scale</button>
+            </div>
+
+            <div id="custom-mesh-list" style="max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.2); border-radius: 4px; padding: 5px;">
+              <p style="font-size: 0.75rem; color: #9ca3af; text-align: center; margin: 5px 0;">No custom colliders added.</p>
+            </div>
+          </div>
         </div>
 
         <!-- CARD 4: Advanced Tools -->
@@ -467,6 +530,8 @@
       <div id="scene-graph-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px;">
          <!-- Populated dynamically -->
       </div>
+
+
     </div>
 
     <!-- Virtual Camera Panel -->
