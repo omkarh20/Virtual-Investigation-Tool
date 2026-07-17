@@ -49,7 +49,7 @@ async def run_segmentation(job_id: str, job_dir: str, config: dict, push_ws: Cal
     # 2. Config reading
     seg_mode = config.get("seg_mode", "auto")
     seg_objects_str = config.get("seg_custom_objects", "")
-    vote_ratio = float(config.get("seg_vote_ratio", 0.5))
+    vote_ratio = float(config.get("seg_vote_ratio", 0.45))
     
     if seg_mode == "auto" and not os.path.exists(cameras_json):
         error_msg = f"cameras.json not found at {cameras_json}"

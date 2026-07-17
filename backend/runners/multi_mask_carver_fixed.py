@@ -152,7 +152,7 @@ def main():
     parser.add_argument("--splat", required=True, help="Path to input point_cloud.ply")
     parser.add_argument("--cameras", required=True, help="Path to cameras.json")
     parser.add_argument("--masks", nargs='+', required=True, help="Paths to the mask images")
-    parser.add_argument("--vote_ratio", type=float, default=0.3, help="Percentage of views required to label (default: 0.3)")
+    parser.add_argument("--vote_ratio", type=float, default=0.45, help="Percentage of views required to label (default: 0.45)")
     parser.add_argument("--output", required=True, help="Path to save the output PLY file")
     parser.add_argument("--recolor", action="store_true", help="Recolor labelled gaussians to red for visual verification")
     

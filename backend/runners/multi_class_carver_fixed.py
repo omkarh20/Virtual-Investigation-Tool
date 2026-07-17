@@ -157,7 +157,7 @@ def main():
     parser.add_argument("--cameras", required=True, help="Path to cameras.json")
     parser.add_argument("--master_dir", required=True, help="Master directory containing subfolders of masks")
     parser.add_argument("--output", required=True, help="Path to save the output PLY file")
-    parser.add_argument("--vote_ratio", type=float, default=0.3, help="Percentage of views required (default: 0.3)")
+    parser.add_argument("--vote_ratio", type=float, default=0.45, help="Percentage of views required (default: 0.45)")
     
     args = parser.parse_args()
 

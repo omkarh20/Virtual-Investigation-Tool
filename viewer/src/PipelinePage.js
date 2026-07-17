@@ -419,7 +419,7 @@ export function initPipelinePage() {
             gs_check_iterations: document.getElementById('cfg-gs-check-iters')?.value || "",
             gs_start_checkpoint: document.getElementById('cfg-gs-start-checkpoint')?.value || "",
             seg_custom_objects: document.getElementById('cfg-seg-objects')?.value || "",
-            seg_vote_ratio: parseFloat(document.getElementById('cfg-seg-vote-ratio')?.value) || 0.5,
+            seg_vote_ratio: parseFloat(document.getElementById('cfg-seg-vote-ratio')?.value) || 0.45,
             seg_mode: document.getElementById('seg-mode-vcam')?.classList.contains('active-mode') ? 'vcam' : 'auto',
             vr_manual_align: document.getElementById('cfg-vr-manual-align')?.checked ?? false,
         };
@@ -437,7 +437,15 @@ export function initPipelinePage() {
             const zip = new JSZip();
             const files = Array.from(selectedFile);
             for (const f of files) {
-                const path = f.webkitRelativePath || f.name;
+                let path = f.webkitRelativePath || f.name;
+                // Strip the top-level folder name so files extract directly into the job root
+                if (f.webkitRelativePath) {
+                    const parts = path.split('/');
+                    if (parts.length > 1) {
+                        parts.shift();
+                        path = parts.join('/');
+                    }
+                }
                 zip.file(path, f);
             }
             if (uploadStatus) uploadStatus.textContent = 'Zipping files (0%)...';
@@ -781,7 +789,7 @@ export function initPipelinePage() {
         const segObjects = val('cfg-seg-objects');
         if (segObjects !== null) cfg.seg_custom_objects = segObjects;
         const segVoteRatio = val('cfg-seg-vote-ratio');
-        if (segVoteRatio !== null) cfg.seg_vote_ratio = parseFloat(segVoteRatio) || 0.5;
+        if (segVoteRatio !== null) cfg.seg_vote_ratio = parseFloat(segVoteRatio) || 0.45;
         cfg.seg_mode = currentSegMode;
         
         const manualAlign = val('cfg-vr-manual-align');
