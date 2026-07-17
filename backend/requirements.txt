@@ -5,6 +5,7 @@ numpy
 plyfile
 trimesh
 opencv-python
+open3d
 
 # ML and Segmentation (masker3.py)
 torch

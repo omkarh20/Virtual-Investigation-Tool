@@ -17,7 +17,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module=".*tiny_vit_sam.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="segment_anything.*")
 
-from runners.colmap_sparse import run_colmap_pipeline
+from runners.colmap_sparse import run_colmap_sparse, run_colmap_pipeline
 from runners.colmap_dense import run_colmap_dense
 from runners.train_3dgs import run_3dgs_training
 from vr_exporter import process_vr_export
@@ -113,6 +113,7 @@ async def push(job_id: str, msg: dict) -> None:
 
 from runners.run_segmentation import run_segmentation
 from runners.run_vr_export import run_vr_export
+from runners.preprocessor import process_inputs
 
 PHASES = [
     {"id": 1, "label": "Preparing Images",   "runner": process_inputs},

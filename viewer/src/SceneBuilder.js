@@ -37,6 +37,10 @@ export class SceneBuilder {
         this.setupHullToggle();
     }
 
+    setVirtualCameraManager(vcManager) {
+        this.vcManager = vcManager;
+    }
+
     // ── File Upload ─────────────────────────────────────────────────────────
     async loadFromFile(file) {
         this.clearScene();
@@ -393,6 +397,7 @@ export class SceneBuilder {
 
     enterAlignmentMode(jobId) {
         this.alignmentJobId = jobId;
+        this.isAligning = true;
         const statusEl = document.getElementById('scene-status');
         if (statusEl) statusEl.innerText = "SCENE EDIT MODE. Align model and draw selections to crop, then click Save Edits.";
         
@@ -1265,6 +1270,80 @@ export class SceneBuilder {
                 this.tooltip.classList.add('hidden');
                 document.body.style.cursor = 'default';
             }
+        }
+    }
+
+    rotateScene(axis, angle) {
+        const axisVec = new THREE.Vector3(
+            axis === 'x' ? 1 : 0,
+            axis === 'y' ? 1 : 0,
+            axis === 'z' ? 1 : 0
+        );
+        const q = new THREE.Quaternion().setFromAxisAngle(axisVec, angle);
+        
+        for (const splat of this.segments.values()) {
+            splat.position.applyQuaternion(q);
+            splat.quaternion.premultiply(q);
+        }
+        for (const hitbox of this.hitboxes.values()) {
+            hitbox.position.applyQuaternion(q);
+            hitbox.quaternion.premultiply(q);
+        }
+        
+        if (typeof this.syncSplatsToHitboxes === 'function') {
+            this.syncSplatsToHitboxes();
+        }
+    }
+
+    createCollisionMeshForLocalSplat() {
+        if (this.segments.size === 0) return;
+        
+        const boundingBox = new THREE.Box3();
+        for (const splat of this.segments.values()) {
+            if (splat.geometry && splat.geometry.computeBoundingBox) {
+                splat.geometry.computeBoundingBox();
+                boundingBox.union(splat.geometry.boundingBox);
+            } else if (splat.boundingBox) {
+                boundingBox.union(splat.boundingBox);
+            }
+        }
+        
+        const size = new THREE.Vector3(20, 10, 20); // Default fallback
+        if (!boundingBox.isEmpty() && boundingBox.max.x !== Infinity) {
+            boundingBox.getSize(size);
+            size.addScalar(2); 
+        }
+
+        const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true, visible: false });
+        const hitbox = new THREE.Mesh(geometry, material);
+        
+        if (!boundingBox.isEmpty() && boundingBox.max.x !== Infinity) {
+            boundingBox.getCenter(hitbox.position);
+        } else {
+            hitbox.position.set(0, 0, 0);
+        }
+
+        hitbox.userData = { id: 'local_room_' + Date.now(), label: 'background', edgeHelper: null };
+        this.hitboxes.set(hitbox.userData.id, hitbox);
+        this.scene.add(hitbox);
+        if (this.physicsManager) {
+            this.physicsManager.addBody(hitbox);
+        }
+    }
+
+    endAlignmentMode() {
+        this.isAligning = false;
+        if (this.alignmentAxesHelper) {
+            this.scene.remove(this.alignmentAxesHelper);
+            this.alignmentAxesHelper = null;
+        }
+    }
+
+    renderAlignmentGizmo() {
+        if (!this.alignmentAxesHelper) {
+            this.alignmentAxesHelper = new THREE.AxesHelper(2);
+            this.scene.add(this.alignmentAxesHelper);
         }
     }
 }
